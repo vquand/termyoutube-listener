@@ -1,0 +1,117 @@
+mod app;
+mod player;
+mod stats;
+mod ui;
+mod ytdlp;
+
+use anyhow::Result;
+use app::{App, Mode};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use player::Player;
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io::{self, Stdout};
+use std::time::{Duration, Instant};
+
+fn main() -> Result<()> {
+    if let Err(e) = ytdlp::check_installed() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+    if let Err(e) = player::check_installed() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+
+    let player = Player::spawn()?;
+    let mut app = App::new(player);
+
+    let mut terminal = setup_terminal()?;
+    let res = run(&mut terminal, &mut app);
+    restore_terminal(&mut terminal)?;
+    res
+}
+
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    Ok(Terminal::new(backend)?)
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+    let tick = Duration::from_millis(200);
+    let mut last_tick = Instant::now();
+
+    while !app.should_quit {
+        app.drain_events();
+        app.refresh_stats();
+        terminal.draw(|f| ui::draw(f, app))?;
+
+        let timeout = tick.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    handle_key(app, key.code, key.modifiers);
+                }
+            }
+        }
+        if last_tick.elapsed() >= tick {
+            last_tick = Instant::now();
+        }
+    }
+    Ok(())
+}
+
+fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
+    match app.mode {
+        Mode::Help => {
+            app.mode = Mode::Browse;
+        }
+        Mode::Searching => match code {
+            KeyCode::Esc => app.cancel_search(),
+            KeyCode::Enter => app.submit_search(),
+            KeyCode::Backspace => {
+                app.query.pop();
+            }
+            KeyCode::Char(c) => app.query.push(c),
+            _ => {}
+        },
+        Mode::Browse => {
+            if mods.contains(KeyModifiers::CONTROL) {
+                if let KeyCode::Char('c') = code {
+                    app.should_quit = true;
+                    return;
+                }
+            }
+            match code {
+                KeyCode::Char('q') => app.should_quit = true,
+                KeyCode::Char('s') => app.enter_search(),
+                KeyCode::Char('?') => app.mode = Mode::Help,
+                KeyCode::Char('t') => app.toggle_stats(),
+                KeyCode::Char(' ') => app.toggle_pause(),
+                KeyCode::Enter => app.play_selected(),
+                KeyCode::Char('n') => app.next_track(),
+                KeyCode::Char('b') => app.prev_track(),
+                KeyCode::Char('f') => app.seek(10.0),
+                KeyCode::Char('F') => app.seek(60.0),
+                KeyCode::Char('r') => app.seek(-10.0),
+                KeyCode::Char('R') => app.seek(-60.0),
+                KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
+                KeyCode::Char('k') | KeyCode::Up => app.move_selection(-1),
+                _ => {}
+            }
+        }
+    }
+}
