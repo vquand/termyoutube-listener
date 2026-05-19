@@ -1,4 +1,6 @@
 mod app;
+mod captions;
+mod clipboard;
 mod player;
 mod stats;
 mod ui;
@@ -100,6 +102,8 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Char('s') => app.enter_search(),
                 KeyCode::Char('?') => app.mode = Mode::Help,
                 KeyCode::Char('t') => app.toggle_stats(),
+                KeyCode::Char('c') => app.toggle_captions(),
+                KeyCode::Char('y') => app.yank_selected_url(),
                 KeyCode::Char(' ') => app.toggle_pause(),
                 KeyCode::Enter => app.play_selected(),
                 KeyCode::Char('n') => app.next_track(),

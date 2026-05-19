@@ -1,4 +1,4 @@
-use crate::app::{App, Mode};
+use crate::app::{App, CaptionStatus, Mode};
 use crate::stats::fmt_bytes;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -10,20 +10,32 @@ use ratatui::{
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
+    let mut constraints = vec![
+        Constraint::Length(3), // search bar
+        Constraint::Min(3),    // results
+        Constraint::Length(1), // shortcut hints
+        Constraint::Length(4), // now playing
+    ];
+    if app.show_captions {
+        constraints.push(Constraint::Length(3)); // captions strip
+    }
+    constraints.push(Constraint::Length(1)); // status
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // search bar
-            Constraint::Min(3),    // results
-            Constraint::Length(4), // now playing
-            Constraint::Length(1), // status
-        ])
+        .constraints(constraints)
         .split(area);
 
     draw_search(f, app, chunks[0]);
     draw_results(f, app, chunks[1]);
-    draw_now_playing(f, app, chunks[2]);
-    draw_status(f, app, chunks[3]);
+    draw_shortcuts(f, chunks[2]);
+    draw_now_playing(f, app, chunks[3]);
+    let status_idx = if app.show_captions {
+        draw_captions(f, app, chunks[4]);
+        5
+    } else {
+        4
+    };
+    draw_status(f, app, chunks[status_idx]);
 
     if app.show_stats {
         draw_stats_corner(f, app, area);
@@ -32,6 +44,63 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.mode == Mode::Help {
         draw_help_overlay(f, area);
     }
+}
+
+fn draw_shortcuts(f: &mut Frame, area: Rect) {
+    let key = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let label = Style::default().fg(Color::DarkGray);
+    let sep = Span::styled("  ·  ", Style::default().fg(Color::DarkGray));
+    let pair = |k: &'static str, l: &'static str| -> [Span<'static>; 2] {
+        [Span::styled(k, key), Span::styled(format!(" {}", l), label)]
+    };
+    let mut spans: Vec<Span> = Vec::new();
+    let entries = [
+        ("s", "search"),
+        ("↵", "play"),
+        ("␣", "pause"),
+        ("n/b", "next/prev"),
+        ("f/r", "±10s"),
+        ("y", "copy URL"),
+        ("c", "CC"),
+        ("t", "stats"),
+        ("?", "help"),
+        ("q", "quit"),
+    ];
+    for (i, (k, l)) in entries.iter().enumerate() {
+        if i > 0 {
+            spans.push(sep.clone());
+        }
+        spans.extend(pair(k, l));
+    }
+    let p = Paragraph::new(Line::from(spans));
+    f.render_widget(p, area);
+}
+
+fn draw_captions(f: &mut Frame, app: &App, area: Rect) {
+    let (label, text, color) = match app.caption_status {
+        CaptionStatus::Idle => (" CC [c] ", "(off)".to_string(), Color::DarkGray),
+        CaptionStatus::Loading => (" CC — loading [c] ", "…".to_string(), Color::DarkGray),
+        CaptionStatus::None => (
+            " CC — none available [c] ",
+            "(this track has no captions)".to_string(),
+            Color::DarkGray,
+        ),
+        CaptionStatus::Error => (
+            " CC — error [c] ",
+            "(yt-dlp failed to fetch captions)".to_string(),
+            Color::Red,
+        ),
+        CaptionStatus::Ready => {
+            let line = app.current_caption().unwrap_or("").to_string();
+            (" CC [c] ", line, Color::White)
+        }
+    };
+    let block = Block::default().borders(Borders::ALL).title(label);
+    let p = Paragraph::new(text)
+        .style(Style::default().fg(color))
+        .wrap(Wrap { trim: true })
+        .block(block);
+    f.render_widget(p, area);
 }
 
 fn draw_stats_corner(f: &mut Frame, app: &App, area: Rect) {
@@ -205,7 +274,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let w = 60.min(area.width.saturating_sub(4));
-    let h = 17.min(area.height.saturating_sub(4));
+    let h = 19.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
@@ -222,6 +291,8 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  r / R    Rewind  10s / 1min"),
         Line::from("  j / k    Move selection down / up"),
         Line::from("  t        Toggle CPU/RAM stats corner"),
+        Line::from("  c        Toggle closed captions"),
+        Line::from("  y        Yank (copy) selected track URL"),
         Line::from("  ?        Toggle this help"),
         Line::from("  q        Quit"),
         Line::from(""),

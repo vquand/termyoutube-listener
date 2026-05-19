@@ -1,3 +1,5 @@
+use crate::captions::{self, Cue};
+use crate::clipboard;
 use crate::player::{Player, PlayerState};
 use crate::stats::{Stats, StatsSampler};
 use crate::ytdlp::{self, Track};
@@ -16,6 +18,19 @@ pub enum SearchEvent {
     Done(String, Result<Vec<Track>>),
 }
 
+pub enum CaptionEvent {
+    Done(String, Result<Vec<Cue>>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptionStatus {
+    Idle,
+    Loading,
+    Ready,
+    None,
+    Error,
+}
+
 pub struct App {
     pub mode: Mode,
     pub query: String,
@@ -32,11 +47,18 @@ pub struct App {
     pub show_stats: bool,
     sampler: StatsSampler,
     last_stats: Stats,
+    pub show_captions: bool,
+    pub caption_status: CaptionStatus,
+    pub captions: Vec<Cue>,
+    captions_track_id: Option<String>,
+    pub caption_events_rx: Receiver<CaptionEvent>,
+    caption_events_tx: Sender<CaptionEvent>,
 }
 
 impl App {
     pub fn new(player: Player) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (cap_tx, cap_rx) = mpsc::channel();
         let sampler = StatsSampler::new(player.pid());
         Self {
             mode: Mode::Browse,
@@ -54,11 +76,51 @@ impl App {
             show_stats: true,
             sampler,
             last_stats: Stats::default(),
+            show_captions: false,
+            caption_status: CaptionStatus::Idle,
+            captions: Vec::new(),
+            captions_track_id: None,
+            caption_events_rx: cap_rx,
+            caption_events_tx: cap_tx,
         }
     }
 
     pub fn toggle_stats(&mut self) {
         self.show_stats = !self.show_stats;
+    }
+
+    pub fn toggle_captions(&mut self) {
+        self.show_captions = !self.show_captions;
+        if self.show_captions {
+            // Lazy fetch: if we have a current track but never loaded captions for it.
+            if let Some(track) = self.current_track().cloned() {
+                if self.captions_track_id.as_deref() != Some(&track.id)
+                    || matches!(self.caption_status, CaptionStatus::Idle | CaptionStatus::Error)
+                {
+                    self.spawn_caption_fetch(&track.id);
+                }
+            }
+        }
+    }
+
+    fn spawn_caption_fetch(&mut self, track_id: &str) {
+        self.caption_status = CaptionStatus::Loading;
+        self.captions.clear();
+        self.captions_track_id = Some(track_id.to_string());
+        let tx = self.caption_events_tx.clone();
+        let id = track_id.to_string();
+        thread::spawn(move || {
+            let res = captions::fetch(&id);
+            let _ = tx.send(CaptionEvent::Done(id, res));
+        });
+    }
+
+    pub fn current_caption(&self) -> Option<&str> {
+        if !self.show_captions {
+            return None;
+        }
+        let pos = self.player.state().position;
+        captions::active_cue(&self.captions, pos)
     }
 
     pub fn refresh_stats(&mut self) {
@@ -112,6 +174,27 @@ impl App {
                 }
             }
         }
+        while let Ok(ev) = self.caption_events_rx.try_recv() {
+            let CaptionEvent::Done(id, res) = ev;
+            // Ignore stale fetches (user already skipped to another track).
+            if self.captions_track_id.as_deref() != Some(&id) {
+                continue;
+            }
+            match res {
+                Ok(cues) if cues.is_empty() => {
+                    self.caption_status = CaptionStatus::None;
+                    self.captions.clear();
+                }
+                Ok(cues) => {
+                    self.caption_status = CaptionStatus::Ready;
+                    self.captions = cues;
+                }
+                Err(_) => {
+                    self.caption_status = CaptionStatus::Error;
+                    self.captions.clear();
+                }
+            }
+        }
         // auto-advance on track end
         let st = self.player.state();
         if st.eof_reached && self.current.is_some() {
@@ -160,6 +243,13 @@ impl App {
             } else {
                 self.status = format!("[{}/{}] {} — {}", idx + 1, self.queue.len(), track.title, track.uploader);
             }
+            // Reset captions for the new track; only fetch if the overlay is on.
+            self.captions.clear();
+            self.captions_track_id = None;
+            self.caption_status = CaptionStatus::Idle;
+            if self.show_captions {
+                self.spawn_caption_fetch(&track.id);
+            }
         }
     }
 
@@ -198,5 +288,17 @@ impl App {
 
     pub fn current_track(&self) -> Option<&Track> {
         self.current.and_then(|i| self.queue.get(i))
+    }
+
+    pub fn yank_selected_url(&mut self) {
+        let Some(track) = self.results.get(self.selected) else {
+            self.status = "Nothing to copy — search and select a track first.".into();
+            return;
+        };
+        let url = track.url();
+        match clipboard::copy(&url) {
+            Ok(_tool) => self.status = format!("Copied URL: {}", url),
+            Err(e) => self.status = format!("Copy failed: {}", e),
+        }
     }
 }
