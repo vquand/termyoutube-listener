@@ -1,3 +1,4 @@
+use crate::audio::{self, OutputDevice};
 use crate::captions::{self, Cue};
 use crate::clipboard;
 use crate::config::{self, Config, LoopMode};
@@ -102,12 +103,16 @@ pub struct App {
     pub playlist_selected: usize,
     pub focus: ListFocus,
     pub volume_popup_until: Option<Instant>,
+    pub output_device: Option<OutputDevice>,
+    pub device_events_rx: Receiver<Option<OutputDevice>>,
 }
 
 impl App {
     pub fn new(player: Player, config: Config, sprites: Registry, playlist: Playlist) -> Self {
         let (tx, rx) = mpsc::channel();
         let (cap_tx, cap_rx) = mpsc::channel();
+        let (dev_tx, dev_rx) = mpsc::channel();
+        audio::spawn_poller(dev_tx);
         let sampler = StatsSampler::new(player.pid());
         let app = Self {
             mode: Mode::Browse,
@@ -138,6 +143,8 @@ impl App {
             playlist_selected: 0,
             focus: ListFocus::Results,
             volume_popup_until: None,
+            output_device: None,
+            device_events_rx: dev_rx,
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
@@ -391,6 +398,9 @@ impl App {
                     self.status = format!("Search failed: {}", e);
                 }
             }
+        }
+        while let Ok(dev) = self.device_events_rx.try_recv() {
+            self.output_device = dev;
         }
         while let Ok(ev) = self.caption_events_rx.try_recv() {
             let CaptionEvent::Done(id, res) = ev;

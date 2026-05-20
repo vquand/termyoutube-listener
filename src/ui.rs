@@ -1,4 +1,5 @@
 use crate::app::{App, CaptionStatus, ListFocus, Mode};
+use crate::audio::{self, DeviceKind};
 use crate::config::LoopMode;
 use crate::sprites::{AnimateOn, Sprite};
 use crate::stats::fmt_bytes;
@@ -178,9 +179,29 @@ fn draw_captions(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(p, area);
 }
 
+fn device_name_str(app: &App) -> String {
+    match &app.output_device {
+        Some(d) => d.name.clone(),
+        None => "(default system output)".to_string(),
+    }
+}
+
+fn device_model_str(app: &App) -> String {
+    match &app.output_device {
+        Some(d) => {
+            if d.bluetooth {
+                format!("{}, {}", d.kind.label(), d.transport)
+            } else {
+                format!("{}, {}", d.kind.label(), d.transport)
+            }
+        }
+        None => "(generic audio)".to_string(),
+    }
+}
+
 fn draw_nerd_overlay(f: &mut Frame, app: &App, area: Rect) {
     let w = 56.min(area.width.saturating_sub(4));
-    let h = 14.min(area.height.saturating_sub(4));
+    let h = 17.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
@@ -263,6 +284,9 @@ fn draw_nerd_overlay(f: &mut Frame, app: &App, area: Rect) {
         row("bitrate", Span::styled(bitrate_str, val)),
         row("sample-rate", Span::styled(rate_str, val)),
         row("channels", Span::styled(chan_str, val)),
+        Line::from(""),
+        row("device", Span::styled(device_name_str(app), val)),
+        row("model", Span::styled(device_model_str(app), val)),
     ];
 
     let block = Block::default()
@@ -358,6 +382,29 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         state.select(Some(selected.min(tracks.len() - 1)));
     }
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn build_device_title(app: &App) -> Line<'static> {
+    let on = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let (kind, bt) = match &app.output_device {
+        Some(d) => (d.kind, d.bluetooth),
+        None => (DeviceKind::Unknown, false),
+    };
+    let vol_block = audio::volume_block(app.config.volume);
+    let mut spans: Vec<Span<'static>> = vec![
+        Span::raw(" "),
+        Span::styled(kind.kaomoji().to_string(), on),
+    ];
+    if bt {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("ᛒ", on));
+    }
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(vol_block.to_string(), on));
+    spans.push(Span::raw(" "));
+    Line::from(spans)
 }
 
 fn build_now_playing_title(app: &App) -> Line<'static> {
@@ -466,7 +513,8 @@ fn build_tab_title(app: &App) -> Line<'static> {
 fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(build_now_playing_title(app));
+        .title(build_now_playing_title(app))
+        .title(build_device_title(app).right_aligned());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -491,7 +539,16 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     let ratio = if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) } else { 0.0 };
     let label = format!("  {}  /  {}", fmt_secs(pos), fmt_secs(dur));
     let label_width = label.chars().count() as u16;
-    let bar_width = rows[1].width.saturating_sub(label_width);
+    // Cap the bar so double-wide unicode in some sprite trails cannot
+    // push the time label off-screen, and so it does not stretch
+    // absurdly wide on huge terminals.
+    const MAX_BAR: u16 = 80;
+    const SAFETY: u16 = 4;
+    let bar_width = rows[1]
+        .width
+        .saturating_sub(label_width)
+        .saturating_sub(SAFETY)
+        .min(MAX_BAR);
 
     let mut spans = cursor_spans(app.current_sprite(), ratio, bar_width);
     spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));

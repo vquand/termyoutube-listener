@@ -96,6 +96,28 @@ assets/sprites/   # JSON definitions for built-in progress cursors,
                   # embedded into the binary at compile time by build.rs.
 ```
 
+## Audio output indicator
+
+The top-right corner of the Now Playing block shows a small kaomoji that
+hints at the current output device, plus a single block glyph that scales
+with volume.
+
+- `<(˃ᴗ˂)>` speaker (built-in, displayport, hdmi, or any device whose name
+  contains "speaker")
+- `Ω(˃ᴗ˂)Ω` headphones (well-known over/on-ear lines like WH-, QC, Bose,
+  Studio, Beats, or any name containing "headphone")
+- `ɞ(˃ᴗ˂)ʚ` earbuds (AirPods, Buds, or any Bluetooth device with a custom
+  name)
+- `?(˃ᴗ˂)?` unknown / detection unavailable
+
+A small `ᛒ` (the Bluetooth rune) appears next to the kaomoji when the
+device is connected over Bluetooth. The block glyph next to it is one of `▁ ▂ ▃ ▄ ▅ ▆ ▇ █` chosen by
+volume level (single glyph, swaps as volume changes).
+
+On macOS, the device is detected via `system_profiler SPAudioDataType -json`
+(re-polled every 5 seconds in a background thread). On Linux and other Unix
+the indicator falls back to the unknown kaomoji.
+
 ## Volume
 
 `z` and `x` step the volume down / up by 10% (clamped to 0..=100). A small
@@ -115,6 +137,9 @@ Hidden by default. Press `/` for a centered modal showing:
 - CPU / RAM for the Rust UI and mpv child (sampled every 500 ms via [`sysinfo`])
 - Current track's audio codec, bitrate, sample rate, channels (mpv property
   observations: `audio-codec-name`, `audio-bitrate`, `audio-params`)
+- Output device name and a one-line model summary (kind + transport).
+  Falls back to a generic "(default system output)" / "(generic audio)" if
+  detection isn't available on this OS.
 
 Press `/`, `Esc`, or `q` again to close. GPU is intentionally absent —
 playback runs with `--no-video` and never touches the GPU.

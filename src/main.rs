@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod captions;
 mod clipboard;
 mod config;
