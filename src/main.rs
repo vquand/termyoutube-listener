@@ -101,6 +101,15 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             KeyCode::Char(c) => app.query.push(c),
             _ => {}
         },
+        Mode::OpenFile => match code {
+            KeyCode::Esc => app.cancel_open_file(),
+            KeyCode::Enter => app.submit_open_file(),
+            KeyCode::Backspace => {
+                app.query.pop();
+            }
+            KeyCode::Char(c) => app.query.push(c),
+            _ => {}
+        },
         Mode::Browse => {
             if mods.contains(KeyModifiers::CONTROL) {
                 if let KeyCode::Char('c') = code {
@@ -111,6 +120,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             match code {
                 KeyCode::Char('q') => app.should_quit = true,
                 KeyCode::Char('s') => app.enter_search(),
+                KeyCode::Char('o') => app.enter_open_file(),
                 KeyCode::Char('?') => app.mode = Mode::Help,
                 KeyCode::Char('/') => app.toggle_nerd(),
                 KeyCode::Char('c') => app.toggle_captions(),

@@ -8,10 +8,18 @@ pub struct Track {
     pub title: String,
     pub uploader: String,
     pub duration: Option<u64>,
+    /// When set, this is the absolute path or URL handed straight to mpv.
+    /// Used for local files opened via `o`; YouTube tracks leave it `None`
+    /// so `url()` builds the watch URL from `id` as before.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 impl Track {
     pub fn url(&self) -> String {
+        if let Some(s) = &self.source {
+            return s.clone();
+        }
         format!("https://www.youtube.com/watch?v={}", self.id)
     }
 
@@ -78,6 +86,7 @@ pub fn search(query: &str, limit: usize) -> Result<Vec<Track>> {
             title,
             uploader,
             duration,
+            source: None,
         });
     }
     Ok(tracks)

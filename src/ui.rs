@@ -317,15 +317,30 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Yellow),
             )
         }
+        Mode::OpenFile => {
+            let mut spans = vec![Span::raw(" Open file ")];
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("↵", "play"));
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("esc", "cancel"));
+            spans.push(Span::raw(" "));
+            (
+                Line::from(spans),
+                format!("{}_", app.query),
+                Style::default().fg(Color::Yellow),
+            )
+        }
         _ => {
             let mut spans = vec![Span::raw(" Search ")];
             spans.push(shortcut_sep());
             spans.extend(shortcut_pair("s", "search"));
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("o", "open file"));
             spans.push(Span::raw(" "));
             (
                 Line::from(spans),
                 if app.query.is_empty() {
-                    "Press `s` to search YouTube...".to_string()
+                    "Press `s` to search YouTube, `o` to open a local file...".to_string()
                 } else {
                     app.query.clone()
                 },
@@ -645,6 +660,7 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from(Span::styled(" ytmtui — keybindings ", Style::default().add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from("  s        Search YouTube"),
+        Line::from("  o        Open local file (path prompt)"),
         Line::from("  Enter    Play selected (queues from results)"),
         Line::from("  Space    Pause / resume"),
         Line::from("  n        Next track"),
