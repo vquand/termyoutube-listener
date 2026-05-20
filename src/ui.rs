@@ -1,4 +1,4 @@
-use crate::app::{App, CaptionStatus, ListFocus, Mode};
+use crate::app::{App, CaptionStatus, ListFocus, Mode, QueueSource};
 use crate::audio::{self, DeviceKind};
 use crate::config::LoopMode;
 use crate::sprites::{AnimateOn, Sprite};
@@ -486,9 +486,33 @@ fn build_device_title(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
+fn queue_source_label(app: &App) -> String {
+    match app.queue_source {
+        QueueSource::Results => "search results".to_string(),
+        QueueSource::Playlist => "Playlist".to_string(),
+        QueueSource::YtPlaylist => "YT Playlist".to_string(),
+        QueueSource::LocalFolder => {
+            let name = app
+                .config
+                .local_folder_label
+                .as_deref()
+                .unwrap_or("folder");
+            format!("⌂: {}", name)
+        }
+    }
+}
+
 fn build_now_playing_title(app: &App) -> Line<'static> {
     let on = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let dim = label_style();
     let mut spans = vec![Span::raw(" Now Playing ")];
+    if app.current_track().is_some() {
+        spans.push(Span::styled("· from: ", dim));
+        spans.push(Span::styled(
+            format!("{} ", queue_source_label(app)),
+            on,
+        ));
+    }
     if !app.config.show_shortcuts {
         // Still surface state indicators when shortcuts are hidden.
         let off = label_style();
@@ -783,8 +807,8 @@ fn fmt_secs(s: f64) -> String {
 }
 
 fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
-    let w = 52.min(area.width.saturating_sub(4));
-    let h = 9.min(area.height.saturating_sub(4));
+    let w = 56.min(area.width.saturating_sub(4));
+    let h = 12.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
@@ -794,9 +818,22 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
     let total = registry.all().len();
     let idx = registry.index_of(&sprite.id);
     let preview = sprite.frame(0).to_string();
+    let langs = crate::config::CAPTION_LANGS;
+    let lang_idx = langs
+        .iter()
+        .position(|l| *l == app.config.caption_lang.as_str())
+        .unwrap_or(0);
+
     let marker_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Yellow);
     let dim = Style::default().fg(Color::DarkGray);
+
+    let marker = |row_idx: usize| -> Span<'static> {
+        Span::styled(
+            if app.params_row == row_idx { " ▶ " } else { "   " },
+            marker_style,
+        )
+    };
 
     let rows: Vec<Line> = vec![
         Line::from(Span::styled(
@@ -805,10 +842,7 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                if app.params_row == 0 { " ▶ " } else { "   " },
-                marker_style,
-            ),
+            marker(0),
             Span::raw("Progress cursor    "),
             Span::styled("◀ ", dim),
             Span::styled(
@@ -817,9 +851,8 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(" ▶", dim),
         ]),
-        Line::from(""),
         Line::from(vec![
-            Span::raw("   preview: "),
+            Span::raw("      preview: "),
             Span::styled(
                 preview,
                 Style::default().fg(sprite.accent).add_modifier(Modifier::BOLD),
@@ -829,11 +862,24 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ←/→ ", key_style),
+            marker(1),
+            Span::raw("CC language        "),
+            Span::styled("◀ ", dim),
+            Span::styled(
+                format!("{:^12}", app.config.caption_lang),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ▶", dim),
+            Span::raw("  "),
+            Span::styled(format!("({}/{})", lang_idx + 1, langs.len()), dim),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ↑/↓ ", key_style),
+            Span::styled("row   ", dim),
+            Span::styled("←/→ ", key_style),
             Span::styled("change   ", dim),
-            Span::styled("Enter ", key_style),
-            Span::styled("cycle   ", dim),
-            Span::styled("p/Esc ", key_style),
+            Span::styled("`/Esc ", key_style),
             Span::styled("close", dim),
         ]),
     ];

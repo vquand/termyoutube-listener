@@ -301,6 +301,15 @@ pub enum ListFocus {
     LocalFolder,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueSource {
+    Results,
+    Playlist,
+    YtPlaylist,
+    LocalFolder,
+}
+
+
 pub enum SearchEvent {
     Done(String, Result<Vec<Track>>),
 }
@@ -331,6 +340,8 @@ pub struct App {
     pub query: String,
     pub results: Vec<Track>,
     pub selected: usize,
+    pub queue: Vec<Track>,
+    pub queue_source: QueueSource,
     pub current: Option<usize>,
     pub status: String,
     pub searching: bool,
@@ -390,6 +401,8 @@ impl App {
             query: String::new(),
             results: Vec::new(),
             selected: 0,
+            queue: Vec::new(),
+            queue_source: QueueSource::Playlist,
             current: None,
             status: "Press `s` to search, `?` for help, `q` to quit.".into(),
             searching: false,
@@ -500,14 +513,6 @@ impl App {
             return;
         }
         let removed = self.playlist.remove(removed_idx);
-        // Keep `current` pointing at the same logical track.
-        if let Some(cur) = self.current {
-            self.current = match removed_idx.cmp(&cur) {
-                std::cmp::Ordering::Less => Some(cur - 1),
-                std::cmp::Ordering::Equal => None, // the playing track is gone
-                std::cmp::Ordering::Greater => Some(cur),
-            };
-        }
         if self.playlist_selected >= self.playlist.len() && self.playlist_selected > 0 {
             self.playlist_selected -= 1;
         }
@@ -622,7 +627,26 @@ impl App {
     }
 
     pub fn params_change(&mut self, delta: i32) {
-        // Currently only one row (progress sprite). Extend by matching on params_row.
+        match self.params_row {
+            0 => self.params_cycle_sprite(delta),
+            1 => self.params_cycle_caption_lang(delta),
+            _ => {}
+        }
+    }
+
+    pub fn params_move(&mut self, delta: i32) {
+        let row_count: i32 = 2;
+        let mut new = self.params_row as i32 + delta;
+        if new < 0 {
+            new = 0;
+        }
+        if new >= row_count {
+            new = row_count - 1;
+        }
+        self.params_row = new as usize;
+    }
+
+    fn params_cycle_sprite(&mut self, delta: i32) {
         let new_id = match delta.signum() {
             -1 => self.sprites.prev_id(&self.config.progress_sprite),
             _ => self.sprites.next_id(&self.config.progress_sprite),
@@ -633,6 +657,25 @@ impl App {
             self.status = format!("Saved cursor (config write failed: {})", e);
         } else {
             self.status = format!("Cursor: {}", name);
+        }
+    }
+
+    fn params_cycle_caption_lang(&mut self, delta: i32) {
+        let langs = config::CAPTION_LANGS;
+        let cur = langs
+            .iter()
+            .position(|l| *l == self.config.caption_lang.as_str())
+            .unwrap_or(0);
+        let next = if delta.signum() < 0 {
+            (cur + langs.len() - 1) % langs.len()
+        } else {
+            (cur + 1) % langs.len()
+        };
+        self.config.caption_lang = langs[next].to_string();
+        if let Err(e) = config::save(&self.config) {
+            self.status = format!("Saved CC lang (config write failed: {})", e);
+        } else {
+            self.status = format!("CC language: {}", self.config.caption_lang);
         }
     }
 
@@ -663,8 +706,9 @@ impl App {
         self.captions_track_id = Some(track_id.to_string());
         let tx = self.caption_events_tx.clone();
         let id = track_id.to_string();
+        let lang = self.config.caption_lang.clone();
         thread::spawn(move || {
-            let res = captions::fetch(&id);
+            let res = captions::fetch(&id, &lang);
             let _ = tx.send(CaptionEvent::Done(id, res));
         });
     }
@@ -919,7 +963,7 @@ impl App {
 
     fn advance_after_eof(&mut self) {
         let Some(cur) = self.current else { return };
-        let n = self.playlist.len();
+        let n = self.queue.len();
         if n == 0 {
             self.current = None;
             return;
@@ -940,7 +984,7 @@ impl App {
             Some(idx) => self.play_at(idx),
             None => {
                 self.current = None;
-                self.status = "playlist finished".into();
+                self.status = "queue finished".into();
             }
         }
     }
@@ -967,52 +1011,50 @@ impl App {
     }
 
     pub fn play_selected(&mut self) {
-        match self.focus {
-            ListFocus::Playlist => {
-                if self.playlist_selected < self.playlist.len() {
-                    self.play_at(self.playlist_selected);
-                }
-            }
-            ListFocus::Results => {
-                let Some(track) = self.results.get(self.selected).cloned() else {
-                    return;
-                };
-                self.play_added_track(track);
-            }
-            ListFocus::YtPlaylist => {
-                let Some(track) = self.yt_playlist.get(self.yt_playlist_selected).cloned() else {
-                    return;
-                };
-                self.play_added_track(track);
-            }
-            ListFocus::LocalFolder => {
-                let Some(track) = self.local_folder.get(self.local_folder_selected).cloned() else {
-                    return;
-                };
-                self.play_added_track(track);
-            }
-        }
-    }
-
-    fn play_added_track(&mut self, track: Track) {
-        let (idx, was_new) = match self.playlist.iter().position(|t| t.id == track.id) {
-            Some(i) => (i, false),
-            None => {
-                self.playlist.push(track);
-                self.persist_playlist();
-                (self.playlist.len() - 1, true)
-            }
+        let (source_tracks, source, sel_idx) = match self.focus {
+            ListFocus::Results => (self.results.clone(), QueueSource::Results, self.selected),
+            ListFocus::Playlist => (
+                self.playlist.clone(),
+                QueueSource::Playlist,
+                self.playlist_selected,
+            ),
+            ListFocus::YtPlaylist => (
+                self.yt_playlist.clone(),
+                QueueSource::YtPlaylist,
+                self.yt_playlist_selected,
+            ),
+            ListFocus::LocalFolder => (
+                self.local_folder.clone(),
+                QueueSource::LocalFolder,
+                self.local_folder_selected,
+            ),
         };
-        self.play_at(idx);
+        let Some(track) = source_tracks.get(sel_idx).cloned() else {
+            return;
+        };
+        self.queue = source_tracks;
+        self.queue_source = source;
+
+        // Mirror the selected track into the local Playlist for memory /
+        // visibility unless we are already playing from Playlist itself.
+        let was_new = if source != QueueSource::Playlist
+            && !self.playlist.iter().any(|t| t.id == track.id)
+        {
+            self.playlist.push(track);
+            self.persist_playlist();
+            true
+        } else {
+            false
+        };
+
+        self.play_at(sel_idx);
         if was_new {
-            // play_at already set "[N/M] ...". Prepend a "+" so the user
-            // can see it was added.
             self.status = format!("+ {}", self.status);
         }
     }
 
     pub fn play_at(&mut self, idx: usize) {
-        if let Some(track) = self.playlist.get(idx).cloned() {
+        if let Some(track) = self.queue.get(idx).cloned() {
             self.current = Some(idx);
             if let Err(e) = self.player.load(&track.url()) {
                 self.status = format!("mpv load failed: {}", e);
@@ -1020,7 +1062,7 @@ impl App {
                 self.status = format!(
                     "[{}/{}] {} — {}",
                     idx + 1,
-                    self.playlist.len(),
+                    self.queue.len(),
                     track.title,
                     track.uploader
                 );
@@ -1037,7 +1079,7 @@ impl App {
 
     pub fn next_track(&mut self) {
         let Some(i) = self.current else { return };
-        let n = self.playlist.len();
+        let n = self.queue.len();
         if n == 0 {
             return;
         }
@@ -1048,7 +1090,7 @@ impl App {
         } else if self.config.loop_mode == LoopMode::All {
             0
         } else {
-            self.status = "end of playlist".into();
+            self.status = "end of queue".into();
             return;
         };
         self.play_at(idx);
@@ -1056,7 +1098,7 @@ impl App {
 
     pub fn prev_track(&mut self) {
         let Some(i) = self.current else { return };
-        let n = self.playlist.len();
+        let n = self.queue.len();
         if n == 0 {
             return;
         }
@@ -1085,7 +1127,7 @@ impl App {
     }
 
     pub fn current_track(&self) -> Option<&Track> {
-        self.current.and_then(|i| self.playlist.get(i))
+        self.current.and_then(|i| self.queue.get(i))
     }
 
     pub fn yank_selected_url(&mut self) {

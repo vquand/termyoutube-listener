@@ -40,6 +40,7 @@ pub struct Config {
     pub yt_playlist_url: Option<String>,
     pub local_folder: Option<String>,
     pub local_folder_label: Option<String>,
+    pub caption_lang: String,
 }
 
 impl Default for Config {
@@ -53,9 +54,16 @@ impl Default for Config {
             yt_playlist_url: None,
             local_folder: None,
             local_folder_label: None,
+            caption_lang: "en".into(),
         }
     }
 }
+
+/// Selectable caption languages exposed in the params menu. Keep "en" as
+/// element 0 since the default falls back here.
+pub const CAPTION_LANGS: &[&str] = &[
+    "en", "vi", "fr", "de", "es", "it", "pt", "ja", "ko", "zh", "ru",
+];
 
 pub fn path() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {

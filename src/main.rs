@@ -183,6 +183,8 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             KeyCode::Esc | KeyCode::Char('`') | KeyCode::Char('q') => app.close_params(),
             KeyCode::Left | KeyCode::Char('h') => app.params_change(-1),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => app.params_change(1),
+            KeyCode::Up | KeyCode::Char('k') => app.params_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.params_move(1),
             _ => {}
         },
     }

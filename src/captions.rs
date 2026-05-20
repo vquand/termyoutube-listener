@@ -10,21 +10,27 @@ pub struct Cue {
     pub text: String,
 }
 
-/// Fetch English captions (manual if present, otherwise auto-generated) for a
-/// YouTube track. Returns an empty Vec if the track has no captions at all.
-pub fn fetch(track_id: &str) -> Result<Vec<Cue>> {
+/// Fetch captions (manual if present, otherwise auto-generated) for a
+/// YouTube track in `lang`. Returns an empty Vec if the track has no
+/// captions in that language.
+pub fn fetch(track_id: &str, lang: &str) -> Result<Vec<Cue>> {
     let stem = std::env::temp_dir().join(format!("ytmtui-cap-{}", track_id));
-    // yt-dlp appends ".<lang>.<ext>" — clean any stale file first.
-    let _ = fs::remove_file(stem.with_extension("en.vtt"));
+    purge_stale(&stem);
 
     let url = format!("https://www.youtube.com/watch?v={}", track_id);
+    // yt-dlp's --sub-lang values are regex-matched with re.match (anchored
+    // at the start only). Without the trailing `$`, "en" also matches
+    // "en-zh", "en-de", etc. — and asking for ten translation tracks at
+    // once trips YouTube's HTTP 429 rate limiter. Anchor the language so
+    // we ask for exactly one track.
+    let lang_arg = format!("{}$", lang);
     let output = Command::new("yt-dlp")
         .args([
             "--skip-download",
             "--write-subs",
             "--write-auto-subs",
             "--sub-lang",
-            "en.*",
+            &lang_arg,
             "--sub-format",
             "vtt",
             "--no-warnings",
@@ -35,18 +41,41 @@ pub fn fetch(track_id: &str) -> Result<Vec<Cue>> {
         .output()
         .context("failed to run yt-dlp for captions")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("yt-dlp captions failed: {}", stderr.trim());
-    }
-
+    // Look at the filesystem first: yt-dlp can exit non-zero when a
+    // *secondary* subtitle variant fails (e.g. 429) even though the
+    // primary .vtt landed fine. If we got the file, use it.
     let vtt_path = find_vtt(&stem)?;
-    let Some(path) = vtt_path else {
-        return Ok(Vec::new());
+    match vtt_path {
+        Some(path) => {
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("read {}", path.display()))?;
+            let _ = fs::remove_file(&path);
+            Ok(parse_vtt(&raw))
+        }
+        None => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("yt-dlp captions failed: {}", stderr.trim());
+            }
+            Ok(Vec::new())
+        }
+    }
+}
+
+fn purge_stale(stem: &PathBuf) {
+    let Some(parent) = stem.parent() else { return };
+    let Some(prefix) = stem.file_name().and_then(|s| s.to_str()) else {
+        return;
     };
-    let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let _ = fs::remove_file(&path);
-    Ok(parse_vtt(&raw))
+    if let Ok(rd) = fs::read_dir(parent) {
+        for entry in rd.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with(prefix) && name.ends_with(".vtt") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
 }
 
 fn find_vtt(stem: &PathBuf) -> Result<Option<PathBuf>> {
