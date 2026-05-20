@@ -48,6 +48,57 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.mode == Mode::Nerd {
         draw_nerd_overlay(f, app, area);
     }
+    if app.volume_popup_active() {
+        draw_volume_overlay(f, app, area);
+    }
+}
+
+fn draw_volume_overlay(f: &mut Frame, app: &App, area: Rect) {
+    let w: u16 = 44.min(area.width.saturating_sub(4));
+    let h: u16 = 3;
+    if area.width < w || area.height < h {
+        return;
+    }
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = area.height.saturating_sub(h + 4); // sit a few rows above the bottom
+    let rect = Rect { x, y, width: w, height: h };
+
+    let v = app.config.volume;
+    let bar_cells: usize = 20;
+    let filled = (v as usize * bar_cells + 50) / 100; // round to nearest
+    let bar_filled: String = "█".repeat(filled);
+    let bar_empty: String = "░".repeat(bar_cells - filled);
+    let pct = format!(" {:>3}% ", v);
+    let face = volume_face(v);
+
+    let line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(bar_filled, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(bar_empty, Style::default().fg(Color::DarkGray)),
+        Span::styled(pct, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(face, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+    ]);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" volume [z/x] ")
+        .style(Style::default().bg(Color::Black));
+    let p = Paragraph::new(line).block(block);
+    f.render_widget(Clear, rect);
+    f.render_widget(p, rect);
+}
+
+/// 6-stage kaomoji whose mouth opens wider as the volume rises, with sound
+/// waves emanating from it on louder stages.
+fn volume_face(v: u8) -> &'static str {
+    match v {
+        0 => "(˘_˘) zZz",
+        1..=20 => "(•‿•) ♪",
+        21..=40 => "(•ω•) ♪♬",
+        41..=60 => "(•o•)) ♬♪",
+        61..=80 => "(•O•))) ♪♬♪",
+        _ => "(•◯•)))) ♬♪♫♬",
+    }
 }
 
 fn key_style() -> Style {
@@ -352,6 +403,7 @@ fn build_now_playing_title(app: &App) -> Line<'static> {
         ("␣", "pause"),
         ("n/b", "skip"),
         ("f/r", "±10s"),
+        ("z/x", "vol"),
         ("c", "CC"),
     ] {
         spans.push(shortcut_sep());
@@ -527,7 +579,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let w = 60.min(area.width.saturating_sub(4));
-    let h = 26.min(area.height.saturating_sub(4));
+    let h = 27.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
@@ -549,6 +601,7 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  L / l    Cycle loop mode (off → all → one)"),
         Line::from("  H / h    Toggle shuffle"),
         Line::from("  /        Toggle nerd-stats modal"),
+        Line::from("  z / x    Volume down / up (10% steps)"),
         Line::from("  c        Toggle closed captions"),
         Line::from("  y        Yank (copy) selected track URL"),
         Line::from("  p        Parameters menu"),

@@ -10,6 +10,7 @@ use anyhow::Result;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// Small xorshift PRNG seeded from system time. Good enough for shuffle.
 fn rand_u64() -> u64 {
@@ -100,6 +101,7 @@ pub struct App {
     pub playlist: Vec<Track>,
     pub playlist_selected: usize,
     pub focus: ListFocus,
+    pub volume_popup_until: Option<Instant>,
 }
 
 impl App {
@@ -107,7 +109,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let (cap_tx, cap_rx) = mpsc::channel();
         let sampler = StatsSampler::new(player.pid());
-        Self {
+        let app = Self {
             mode: Mode::Browse,
             query: String::new(),
             results: Vec::new(),
@@ -135,7 +137,11 @@ impl App {
             playlist: playlist.tracks,
             playlist_selected: 0,
             focus: ListFocus::Results,
-        }
+            volume_popup_until: None,
+        };
+        // Apply persisted volume to mpv at startup.
+        let _ = app.player.set_volume(app.config.volume);
+        app
     }
 
     pub fn focused_len(&self) -> usize {
@@ -233,6 +239,26 @@ impl App {
     pub fn toggle_shortcuts(&mut self) {
         self.config.show_shortcuts = !self.config.show_shortcuts;
         self.persist_config();
+    }
+
+    pub fn volume_up(&mut self) {
+        self.set_volume(self.config.volume.saturating_add(10).min(100));
+    }
+
+    pub fn volume_down(&mut self) {
+        self.set_volume(self.config.volume.saturating_sub(10));
+    }
+
+    fn set_volume(&mut self, v: u8) {
+        self.config.volume = v;
+        let _ = self.player.set_volume(v);
+        self.volume_popup_until = Some(Instant::now() + Duration::from_millis(2000));
+        self.persist_config();
+    }
+
+    pub fn volume_popup_active(&self) -> bool {
+        self.volume_popup_until
+            .map_or(false, |t| Instant::now() < t)
     }
 
     fn persist_config(&mut self) {

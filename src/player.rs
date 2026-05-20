@@ -198,6 +198,10 @@ impl Player {
         self.command(vec![json!("seek"), json!(seconds), json!("relative")])
     }
 
+    pub fn set_volume(&self, v: u8) -> Result<()> {
+        self.command(vec![json!("set_property"), json!("volume"), json!(v as i64)])
+    }
+
     pub fn state(&self) -> PlayerState {
         self.state.lock().unwrap().clone()
     }

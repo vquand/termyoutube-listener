@@ -123,6 +123,8 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Char('L') | KeyCode::Char('l') => app.cycle_loop(),
                 KeyCode::Char('H') | KeyCode::Char('h') => app.toggle_shuffle(),
                 KeyCode::Char('.') => app.toggle_shortcuts(),
+                KeyCode::Char('z') => app.volume_down(),
+                KeyCode::Char('x') => app.volume_up(),
                 KeyCode::Char(' ') => app.toggle_pause(),
                 KeyCode::Enter => app.play_selected(),
                 KeyCode::Char('n') => app.next_track(),

@@ -55,6 +55,7 @@ arrow-key dependencies, no OS-specific media keys.
 | `L` / `l` | Cycle loop mode (off → all → one)   |
 | `H` / `h` | Toggle shuffle                      |
 | `/`       | Toggle nerd-stats modal             |
+| `z` / `x` | Volume down / up (10% steps)        |
 | `c`       | Toggle closed captions strip        |
 | `y`       | Yank (copy) selected track URL      |
 | `p`       | Open parameters menu                |
@@ -94,6 +95,16 @@ src/
 assets/sprites/   # JSON definitions for built-in progress cursors,
                   # embedded into the binary at compile time by build.rs.
 ```
+
+## Volume
+
+`z` and `x` step the volume down / up by 10% (clamped to 0..=100). A small
+popup near the bottom of the screen shows for ~2 seconds after each press: a
+fixed-position 20-cell bar, the percentage, and a 6-stage kaomoji whose mouth
+opens wider on louder stages with music notes trailing it.
+
+Stages: mute, 1-20%, 21-40%, 41-60%, 61-80%, 81-100%. Volume is persisted in
+`config.json` and applied to mpv at startup.
 
 ## Nerd stats
 

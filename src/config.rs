@@ -36,6 +36,7 @@ pub struct Config {
     pub loop_mode: LoopMode,
     pub shuffle: bool,
     pub show_shortcuts: bool,
+    pub volume: u8,
 }
 
 impl Default for Config {
@@ -45,6 +46,7 @@ impl Default for Config {
             loop_mode: LoopMode::Off,
             shuffle: false,
             show_shortcuts: true,
+            volume: 80,
         }
     }
 }
