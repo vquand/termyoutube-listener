@@ -7,6 +7,7 @@ use crate::sprites::{Registry, Sprite};
 use crate::stats::{Stats, StatsSampler};
 use crate::ytdlp::{self, Track};
 use anyhow::Result;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -30,6 +31,20 @@ fn rand_u64() -> u64 {
     s
 }
 
+fn expand_tilde(input: &str) -> PathBuf {
+    if let Some(rest) = input.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    if input == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+    PathBuf::from(input)
+}
+
 fn rand_index_excluding(n: usize, except: usize) -> usize {
     if n <= 1 {
         return 0;
@@ -48,6 +63,7 @@ pub enum Mode {
     Help,
     Params,
     Nerd,
+    OpenFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +374,62 @@ impl App {
     pub fn cancel_search(&mut self) {
         self.mode = Mode::Browse;
         self.status.clear();
+    }
+
+    pub fn enter_open_file(&mut self) {
+        self.mode = Mode::OpenFile;
+        self.query.clear();
+        self.status = "Type a file path (~ ok) and press Enter. Esc to cancel.".into();
+    }
+
+    pub fn cancel_open_file(&mut self) {
+        self.mode = Mode::Browse;
+        self.query.clear();
+        self.status.clear();
+    }
+
+    pub fn submit_open_file(&mut self) {
+        let raw = self.query.trim().to_string();
+        self.mode = Mode::Browse;
+        self.query.clear();
+        if raw.is_empty() {
+            return;
+        }
+        let expanded = expand_tilde(&raw);
+        let abs = match std::fs::canonicalize(&expanded) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("not found: {} ({})", expanded.display(), e);
+                return;
+            }
+        };
+        if !abs.is_file() {
+            self.status = format!("not a file: {}", abs.display());
+            return;
+        }
+        let path_str = abs.to_string_lossy().to_string();
+        let title = abs
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path_str.clone());
+        let track = Track {
+            id: path_str.clone(),
+            title,
+            uploader: "(local file)".into(),
+            duration: None,
+            source: Some(path_str.clone()),
+        };
+        let idx = match self.playlist.iter().position(|t| t.id == track.id) {
+            Some(i) => i,
+            None => {
+                self.playlist.push(track);
+                self.persist_playlist();
+                self.playlist.len() - 1
+            }
+        };
+        self.focus = ListFocus::Playlist;
+        self.playlist_selected = idx;
+        self.play_at(idx);
     }
 
     pub fn submit_search(&mut self) {
