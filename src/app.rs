@@ -46,6 +46,230 @@ fn expand_tilde(input: &str) -> PathBuf {
     PathBuf::from(input)
 }
 
+/// Massage common copy-paste artifacts out of a path string before we touch
+/// the filesystem. Handles surrounding quotes (ASCII + smart), shell-style
+/// backslash escapes for common metacharacters, and `file://` URIs with
+/// percent-encoding.
+pub fn normalize_path_input(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let unquoted = strip_outer_quotes(trimmed);
+    if let Some(rest) = unquoted.strip_prefix("file://") {
+        // file:// URIs may be `file:///abs/path` (host empty) or
+        // `file://localhost/abs/path`. Drop a leading "localhost".
+        let after_host = rest.strip_prefix("localhost").unwrap_or(rest);
+        return percent_decode(after_host);
+    }
+    unescape_shell(unquoted)
+}
+
+fn strip_outer_quotes(s: &str) -> &str {
+    const PAIRS: &[(char, char)] = &[
+        ('"', '"'),
+        ('\'', '\''),
+        ('\u{201C}', '\u{201D}'), // smart double quotes
+        ('\u{2018}', '\u{2019}'), // smart single quotes
+        ('`', '`'),
+    ];
+    for (open, close) in PAIRS {
+        let mut chars = s.chars();
+        if chars.next() == Some(*open) && s.chars().last() == Some(*close) && s.chars().count() >= 2
+        {
+            let inner = &s[open.len_utf8()..s.len() - close.len_utf8()];
+            return inner;
+        }
+    }
+    s
+}
+
+fn unescape_shell(s: &str) -> String {
+    // Only unescape `\` followed by a shell metachar; preserve backslashes
+    // that introduce something else (e.g. Windows path separators, escape
+    // sequences we do not own).
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                if matches!(
+                    next,
+                    ' ' | '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\\' | '&' | ';' | '`' | '$' | '!' | '*' | '?'
+                ) {
+                    out.push(next);
+                    chars.next();
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(a), Some(b)) = (hi, lo) {
+                out.push((a * 16 + b) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod path_input_tests {
+    use super::normalize_path_input;
+
+    #[test]
+    fn strips_double_quotes() {
+        assert_eq!(normalize_path_input("\"/foo/bar baz.webm\""), "/foo/bar baz.webm");
+    }
+
+    #[test]
+    fn strips_single_quotes() {
+        assert_eq!(normalize_path_input("'/foo/bar baz.webm'"), "/foo/bar baz.webm");
+    }
+
+    #[test]
+    fn unescapes_shell_spaces_and_parens() {
+        assert_eq!(
+            normalize_path_input(r"/foo/Main\ Title\ \(2024\).webm"),
+            "/foo/Main Title (2024).webm"
+        );
+    }
+
+    #[test]
+    fn keeps_unrelated_backslashes() {
+        // Windows-style separators must survive.
+        assert_eq!(normalize_path_input(r"C:\Users\foo"), r"C:\Users\foo");
+    }
+
+    #[test]
+    fn decodes_file_uri() {
+        assert_eq!(
+            normalize_path_input("file:///foo/Main%20Title.webm"),
+            "/foo/Main Title.webm"
+        );
+        assert_eq!(
+            normalize_path_input("file://localhost/foo/Main%20Title.webm"),
+            "/foo/Main Title.webm"
+        );
+    }
+
+    #[test]
+    fn keeps_full_width_chars() {
+        // Quotes stripped, full-width punctuation preserved.
+        assert_eq!(
+            normalize_path_input("\"/tmp/Arknights： ｜ Theme.webm\""),
+            "/tmp/Arknights： ｜ Theme.webm"
+        );
+    }
+
+    #[test]
+    fn passthrough_plain_path() {
+        assert_eq!(normalize_path_input("/foo/bar.webm"), "/foo/bar.webm");
+    }
+
+    #[test]
+    fn trims_whitespace() {
+        assert_eq!(normalize_path_input("  /foo/bar.webm  "), "/foo/bar.webm");
+    }
+}
+
+/// Last-resort lookup: scan the target file's parent dir for a filename
+/// that matches the requested one after collapsing consecutive whitespace
+/// and lowercasing. Rescues pastes that drift slightly from the on-disk
+/// name (extra spaces, case differences from a fuzzy IME, etc.).
+fn fuzzy_lookup(target: &std::path::Path) -> Option<PathBuf> {
+    let parent = target.parent()?;
+    let needle_key = fuzzy_key(&target.file_name()?.to_string_lossy());
+    if needle_key.is_empty() {
+        return None;
+    }
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if fuzzy_key(&name) == needle_key {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+fn fuzzy_key(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+            }
+            prev_space = true;
+        } else {
+            out.extend(c.to_lowercase());
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn write_open_debug_log(
+    raw: &str,
+    normalized: &str,
+    expanded: &std::path::Path,
+    err: &std::io::Error,
+) -> PathBuf {
+    let path = std::env::temp_dir().join("ytmtui-open-debug.log");
+    let mut report = String::new();
+    report.push_str("ytmtui open-file failure debug\n\n");
+    report.push_str(&format!("raw input chars: {} U+codepoints\n", raw.chars().count()));
+    report.push_str(&format!("  text: {raw:?}\n"));
+    report.push_str("  codepoints:");
+    for c in raw.chars() {
+        report.push_str(&format!(" U+{:04X}", c as u32));
+    }
+    report.push_str("\n\n");
+    report.push_str(&format!("normalized: {normalized:?}\n"));
+    report.push_str("  codepoints:");
+    for c in normalized.chars() {
+        report.push_str(&format!(" U+{:04X}", c as u32));
+    }
+    report.push_str("\n\n");
+    report.push_str(&format!("expanded path: {}\n", expanded.display()));
+    report.push_str(&format!("canonicalize error: {err}\n\n"));
+
+    if let Some(parent) = expanded.parent() {
+        report.push_str(&format!("parent dir: {}\n", parent.display()));
+        match std::fs::read_dir(parent) {
+            Ok(rd) => {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    report.push_str(&format!("  {name}\n"));
+                    report.push_str("    codepoints:");
+                    for c in name.chars() {
+                        report.push_str(&format!(" U+{:04X}", c as u32));
+                    }
+                    report.push('\n');
+                }
+            }
+            Err(e) => {
+                report.push_str(&format!("  (failed to list parent: {e})\n"));
+            }
+        }
+    }
+
+    let _ = std::fs::write(&path, report);
+    path
+}
+
 fn rand_index_excluding(n: usize, except: usize) -> usize {
     if n <= 1 {
         return 0;
@@ -389,6 +613,22 @@ impl App {
         self.status = "Type a file path (~ ok) and press Enter. Esc to cancel.".into();
     }
 
+    /// Append a bracketed-paste payload to whichever input is active. We
+    /// strip embedded newlines so a multi-line clipboard does not fire
+    /// Enter mid-paste, which used to truncate long file paths that
+    /// wrapped on a narrow terminal.
+    pub fn handle_paste(&mut self, text: &str) {
+        if !matches!(self.mode, Mode::Searching | Mode::OpenFile) {
+            return;
+        }
+        for c in text.chars() {
+            if c == '\n' || c == '\r' {
+                continue;
+            }
+            self.query.push(c);
+        }
+    }
+
     pub fn cancel_open_file(&mut self) {
         self.mode = Mode::Browse;
         self.query.clear();
@@ -402,13 +642,26 @@ impl App {
         if raw.is_empty() {
             return;
         }
-        let expanded = expand_tilde(&raw);
+        let normalized = normalize_path_input(&raw);
+        let expanded = expand_tilde(&normalized);
+        // Try canonicalize first; if it fails (file truly missing or NFC/NFD
+        // mismatch confusing the resolver), fall back to a same-folder
+        // grapheme-equivalent lookup that compares filenames after stripping
+        // path normalization quirks.
         let abs = match std::fs::canonicalize(&expanded) {
             Ok(p) => p,
-            Err(e) => {
-                self.status = format!("not found: {} ({})", expanded.display(), e);
-                return;
-            }
+            Err(e) => match fuzzy_lookup(&expanded) {
+                Some(p) => p,
+                None => {
+                    let log_path = write_open_debug_log(&raw, &normalized, &expanded, &e);
+                    self.status = format!(
+                        "not found: {} -- debug log at {}",
+                        expanded.display(),
+                        log_path.display()
+                    );
+                    return;
+                }
+            },
         };
         if !abs.is_file() {
             self.status = format!("not a file: {}", abs.display());
@@ -422,7 +675,7 @@ impl App {
         let track = Track {
             id: path_str.clone(),
             title,
-            uploader: "(local file)".into(),
+            uploader: String::new(),
             duration: None,
             source: Some(path_str.clone()),
         };

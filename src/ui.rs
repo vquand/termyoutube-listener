@@ -370,14 +370,24 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
             let is_playing = current_id.as_deref() == Some(&t.id);
             let marker = if is_playing { "▶ " } else { "  " };
             let dur = t.duration_str();
-            let line = Line::from(vec![
+            let mut spans = vec![
                 Span::styled(marker, Style::default().fg(Color::Green)),
                 Span::raw(format!("{:>5}  ", dur)),
-                Span::styled(t.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    t.source_glyph().to_string(),
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
-                Span::styled(format!("— {}", t.uploader), Style::default().fg(Color::DarkGray)),
-            ]);
-            ListItem::new(line)
+                Span::styled(t.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            ];
+            if !t.is_local() && !t.uploader.is_empty() {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    format!("— {}", t.uploader),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -537,7 +547,11 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     let track_line = match app.current_track() {
         Some(t) => {
             let pause = if st.paused { "⏸ " } else { "▶ " };
-            format!("{}{} — {}", pause, t.title, t.uploader)
+            if t.is_local() || t.uploader.is_empty() {
+                format!("{}{}", pause, t.title)
+            } else {
+                format!("{}{} — {}", pause, t.title, t.uploader)
+            }
         }
         None => "(nothing playing — pick a track and press Enter)".to_string(),
     };

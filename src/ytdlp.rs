@@ -29,6 +29,20 @@ impl Track {
             None => "--:--".to_string(),
         }
     }
+
+    /// One-glyph source marker shown between the duration and the title in
+    /// list rows. Extend this match for new providers (e.g. "B" for
+    /// bilibili, "D" for deezer) by sniffing the source URL prefix.
+    pub fn source_glyph(&self) -> &'static str {
+        match self.source.as_deref() {
+            None => "Y",      // default: YouTube watch URL built from id
+            Some(_) => "⌂",   // local file
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.source.is_some()
+    }
 }
 
 #[derive(Debug, Deserialize)]
