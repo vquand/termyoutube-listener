@@ -3,6 +3,7 @@ mod audio;
 mod captions;
 mod clipboard;
 mod config;
+mod local_scan;
 mod player;
 mod playlist;
 mod sprites;
@@ -39,7 +40,9 @@ fn main() -> Result<()> {
     let cfg = config::load();
     let registry = sprites::Registry::load();
     let pl = playlist::load();
-    let mut app = App::new(player, cfg, registry, pl);
+    let yt_pl = playlist::load_yt();
+    let local_pl = playlist::load_local();
+    let mut app = App::new(player, cfg, registry, pl, yt_pl, local_pl);
 
     let mut terminal = setup_terminal()?;
     let res = run(&mut terminal, &mut app);
@@ -127,6 +130,15 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             KeyCode::Char(c) => app.query.push(c),
             _ => {}
         },
+        Mode::YtPlaylistInput => match code {
+            KeyCode::Esc => app.cancel_yt_playlist_input(),
+            KeyCode::Enter => app.submit_yt_playlist(),
+            KeyCode::Backspace => {
+                app.query.pop();
+            }
+            KeyCode::Char(c) => app.query.push(c),
+            _ => {}
+        },
         Mode::Browse => {
             if mods.contains(KeyModifiers::CONTROL) {
                 if let KeyCode::Char('c') = code {
@@ -142,7 +154,8 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Char('/') => app.toggle_nerd(),
                 KeyCode::Char('c') => app.toggle_captions(),
                 KeyCode::Char('y') => app.yank_selected_url(),
-                KeyCode::Char('p') => app.open_params(),
+                KeyCode::Char('p') => app.enter_yt_playlist_input(),
+                KeyCode::Char('`') => app.open_params(),
                 KeyCode::Tab => app.switch_focus(),
                 KeyCode::Char('+') => app.add_focused_to_playlist(),
                 KeyCode::Char('-') | KeyCode::Backspace | KeyCode::Delete => {
@@ -167,7 +180,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             }
         }
         Mode::Params => match code {
-            KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('q') => app.close_params(),
+            KeyCode::Esc | KeyCode::Char('`') | KeyCode::Char('q') => app.close_params(),
             KeyCode::Left | KeyCode::Char('h') => app.params_change(-1),
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => app.params_change(1),
             _ => {}

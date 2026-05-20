@@ -13,6 +13,12 @@ pub struct Track {
     /// so `url()` builds the watch URL from `id` as before.
     #[serde(default)]
     pub source: Option<String>,
+    /// Distance from a scanned local-folder root. `Some(0)` means the file
+    /// sits directly in the folder, `Some(1)` one level down, etc. Only
+    /// set for tracks discovered through folder scan; `None` for everything
+    /// else.
+    #[serde(default)]
+    pub local_depth: Option<u8>,
 }
 
 impl Track {
@@ -55,6 +61,57 @@ struct FlatEntry {
     channel: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+}
+
+/// Fetch every video from a public YouTube playlist URL (flat metadata
+/// only, no actual download). Use this for the dedicated "YT Playlist"
+/// tab.
+pub fn fetch_playlist(url: &str) -> Result<Vec<Track>> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--flat-playlist",
+            "--dump-json",
+            "--no-warnings",
+            "--skip-download",
+            url,
+        ])
+        .output()
+        .context("failed to run yt-dlp (is it installed and on PATH?)")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("yt-dlp failed: {}", stderr.trim());
+    }
+    Ok(parse_track_jsonl(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_track_jsonl(stdout: &str) -> Vec<Track> {
+    let mut tracks = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let entry: FlatEntry = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(id) = entry.id else { continue };
+        let title = entry.title.unwrap_or_else(|| "(untitled)".into());
+        let uploader = entry
+            .uploader
+            .or(entry.channel)
+            .unwrap_or_else(|| "(unknown)".into());
+        let duration = entry.duration.map(|d| d as u64);
+        tracks.push(Track {
+            id,
+            title,
+            uploader,
+            duration,
+            source: None,
+            local_depth: None,
+        });
+    }
+    tracks
 }
 
 pub fn search(query: &str, limit: usize) -> Result<Vec<Track>> {
@@ -101,6 +158,7 @@ pub fn search(query: &str, limit: usize) -> Result<Vec<Track>> {
             uploader,
             duration,
             source: None,
+            local_depth: None,
         });
     }
     Ok(tracks)

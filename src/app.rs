@@ -3,6 +3,7 @@ use crate::captions::{self, Cue};
 use crate::clipboard;
 use crate::config::{self, Config, LoopMode};
 use crate::player::{Player, PlayerState};
+use crate::local_scan;
 use crate::playlist::{self, Playlist};
 use crate::sprites::{Registry, Sprite};
 use crate::stats::{Stats, StatsSampler};
@@ -289,16 +290,27 @@ pub enum Mode {
     Params,
     Nerd,
     OpenFile,
+    YtPlaylistInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListFocus {
     Results,
     Playlist,
+    YtPlaylist,
+    LocalFolder,
 }
 
 pub enum SearchEvent {
     Done(String, Result<Vec<Track>>),
+}
+
+pub enum YtPlaylistEvent {
+    Done(String, Result<Vec<Track>>),
+}
+
+pub enum LocalFolderEvent {
+    Done(String, Vec<Track>),
 }
 
 pub enum CaptionEvent {
@@ -345,13 +357,32 @@ pub struct App {
     pub volume_popup_until: Option<Instant>,
     pub output_device: Option<OutputDevice>,
     pub device_events_rx: Receiver<Option<OutputDevice>>,
+    pub yt_playlist: Vec<Track>,
+    pub yt_playlist_selected: usize,
+    pub yt_playlist_loading: bool,
+    pub yt_playlist_events_rx: Receiver<YtPlaylistEvent>,
+    yt_playlist_events_tx: Sender<YtPlaylistEvent>,
+    pub local_folder: Vec<Track>,
+    pub local_folder_selected: usize,
+    pub local_folder_scanning: bool,
+    pub local_folder_events_rx: Receiver<LocalFolderEvent>,
+    local_folder_events_tx: Sender<LocalFolderEvent>,
 }
 
 impl App {
-    pub fn new(player: Player, config: Config, sprites: Registry, playlist: Playlist) -> Self {
+    pub fn new(
+        player: Player,
+        config: Config,
+        sprites: Registry,
+        playlist: Playlist,
+        yt_playlist: Playlist,
+        local_folder: Playlist,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let (cap_tx, cap_rx) = mpsc::channel();
         let (dev_tx, dev_rx) = mpsc::channel();
+        let (yt_tx, yt_rx) = mpsc::channel();
+        let (lf_tx, lf_rx) = mpsc::channel();
         audio::spawn_poller(dev_tx);
         let sampler = StatsSampler::new(player.pid());
         let app = Self {
@@ -385,6 +416,16 @@ impl App {
             volume_popup_until: None,
             output_device: None,
             device_events_rx: dev_rx,
+            yt_playlist: yt_playlist.tracks,
+            yt_playlist_selected: 0,
+            yt_playlist_loading: false,
+            yt_playlist_events_rx: yt_rx,
+            yt_playlist_events_tx: yt_tx,
+            local_folder: local_folder.tracks,
+            local_folder_selected: 0,
+            local_folder_scanning: false,
+            local_folder_events_rx: lf_rx,
+            local_folder_events_tx: lf_tx,
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
@@ -395,6 +436,8 @@ impl App {
         match self.focus {
             ListFocus::Results => self.results.len(),
             ListFocus::Playlist => self.playlist.len(),
+            ListFocus::YtPlaylist => self.yt_playlist.len(),
+            ListFocus::LocalFolder => self.local_folder.len(),
         }
     }
 
@@ -402,6 +445,8 @@ impl App {
         match self.focus {
             ListFocus::Results => self.selected,
             ListFocus::Playlist => self.playlist_selected,
+            ListFocus::YtPlaylist => self.yt_playlist_selected,
+            ListFocus::LocalFolder => self.local_folder_selected,
         }
     }
 
@@ -409,22 +454,31 @@ impl App {
         match self.focus {
             ListFocus::Results => &self.results,
             ListFocus::Playlist => &self.playlist,
+            ListFocus::YtPlaylist => &self.yt_playlist,
+            ListFocus::LocalFolder => &self.local_folder,
         }
     }
 
     pub fn switch_focus(&mut self) {
         self.focus = match self.focus {
             ListFocus::Results => ListFocus::Playlist,
-            ListFocus::Playlist => ListFocus::Results,
+            ListFocus::Playlist => ListFocus::YtPlaylist,
+            ListFocus::YtPlaylist => ListFocus::LocalFolder,
+            ListFocus::LocalFolder => ListFocus::Results,
         };
     }
 
     pub fn add_focused_to_playlist(&mut self) {
-        if self.focus != ListFocus::Results {
-            return;
-        }
-        let Some(track) = self.results.get(self.selected).cloned() else {
-            self.status = "nothing to add — search first".into();
+        let track = match self.focus {
+            ListFocus::Results => self.results.get(self.selected).cloned(),
+            ListFocus::YtPlaylist => self.yt_playlist.get(self.yt_playlist_selected).cloned(),
+            ListFocus::LocalFolder => self.local_folder.get(self.local_folder_selected).cloned(),
+            ListFocus::Playlist => {
+                return;
+            }
+        };
+        let Some(track) = track else {
+            self.status = "nothing to add — pick a track first".into();
             return;
         };
         if self.playlist.iter().any(|t| t.id == track.id) {
@@ -466,6 +520,42 @@ impl App {
         if let Err(e) = playlist::save(&pl) {
             self.status = format!("playlist saved (write failed: {})", e);
         }
+    }
+
+    fn persist_yt_playlist(&mut self) {
+        let pl = Playlist { tracks: self.yt_playlist.clone() };
+        if let Err(e) = playlist::save_yt(&pl) {
+            self.status = format!("yt playlist saved (write failed: {})", e);
+        }
+    }
+
+    fn persist_local_folder(&mut self) {
+        let pl = Playlist { tracks: self.local_folder.clone() };
+        if let Err(e) = playlist::save_local(&pl) {
+            self.status = format!("local folder saved (write failed: {})", e);
+        }
+    }
+
+    fn start_local_folder_scan(&mut self, path: PathBuf) {
+        let folder_str = path.to_string_lossy().to_string();
+        let label = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| folder_str.clone());
+        self.config.local_folder = Some(folder_str.clone());
+        self.config.local_folder_label = Some(label.clone());
+        self.persist_config();
+        self.local_folder_scanning = true;
+        self.focus = ListFocus::LocalFolder;
+        self.local_folder_selected = 0;
+        self.status = format!("Scanning {}...", folder_str);
+        let tx = self.local_folder_events_tx.clone();
+        let path_clone = path.clone();
+        let folder_key = folder_str.clone();
+        thread::spawn(move || {
+            let tracks = local_scan::scan_folder(&path_clone);
+            let _ = tx.send(LocalFolderEvent::Done(folder_key, tracks));
+        });
     }
 
     pub fn cycle_loop(&mut self) {
@@ -618,7 +708,10 @@ impl App {
     /// Enter mid-paste, which used to truncate long file paths that
     /// wrapped on a narrow terminal.
     pub fn handle_paste(&mut self, text: &str) {
-        if !matches!(self.mode, Mode::Searching | Mode::OpenFile) {
+        if !matches!(
+            self.mode,
+            Mode::Searching | Mode::OpenFile | Mode::YtPlaylistInput
+        ) {
             return;
         }
         for c in text.chars() {
@@ -627,6 +720,43 @@ impl App {
             }
             self.query.push(c);
         }
+    }
+
+    pub fn enter_yt_playlist_input(&mut self) {
+        self.mode = Mode::YtPlaylistInput;
+        self.query.clear();
+        if let Some(current) = self.config.yt_playlist_url.clone() {
+            self.query = current;
+        }
+        self.status = "Paste a YouTube playlist URL and press Enter. Esc to cancel.".into();
+    }
+
+    pub fn cancel_yt_playlist_input(&mut self) {
+        self.mode = Mode::Browse;
+        self.query.clear();
+        self.status.clear();
+    }
+
+    pub fn submit_yt_playlist(&mut self) {
+        let raw = self.query.trim().to_string();
+        self.mode = Mode::Browse;
+        self.query.clear();
+        if raw.is_empty() {
+            return;
+        }
+        let url = normalize_path_input(&raw); // strips quotes / shell escapes
+        self.config.yt_playlist_url = Some(url.clone());
+        self.persist_config();
+        self.yt_playlist_loading = true;
+        self.focus = ListFocus::YtPlaylist;
+        self.yt_playlist_selected = 0;
+        self.status = format!("Fetching YT playlist...");
+        let tx = self.yt_playlist_events_tx.clone();
+        let url_clone = url.clone();
+        thread::spawn(move || {
+            let res = ytdlp::fetch_playlist(&url_clone);
+            let _ = tx.send(YtPlaylistEvent::Done(url_clone, res));
+        });
     }
 
     pub fn cancel_open_file(&mut self) {
@@ -644,10 +774,6 @@ impl App {
         }
         let normalized = normalize_path_input(&raw);
         let expanded = expand_tilde(&normalized);
-        // Try canonicalize first; if it fails (file truly missing or NFC/NFD
-        // mismatch confusing the resolver), fall back to a same-folder
-        // grapheme-equivalent lookup that compares filenames after stripping
-        // path normalization quirks.
         let abs = match std::fs::canonicalize(&expanded) {
             Ok(p) => p,
             Err(e) => match fuzzy_lookup(&expanded) {
@@ -663,8 +789,12 @@ impl App {
                 }
             },
         };
+        if abs.is_dir() {
+            self.start_local_folder_scan(abs);
+            return;
+        }
         if !abs.is_file() {
-            self.status = format!("not a file: {}", abs.display());
+            self.status = format!("not a file or folder: {}", abs.display());
             return;
         }
         let path_str = abs.to_string_lossy().to_string();
@@ -678,6 +808,7 @@ impl App {
             uploader: String::new(),
             duration: None,
             source: Some(path_str.clone()),
+            local_depth: None,
         };
         let idx = match self.playlist.iter().position(|t| t.id == track.id) {
             Some(i) => i,
@@ -726,6 +857,37 @@ impl App {
         }
         while let Ok(dev) = self.device_events_rx.try_recv() {
             self.output_device = dev;
+        }
+        while let Ok(ev) = self.yt_playlist_events_rx.try_recv() {
+            let YtPlaylistEvent::Done(url, res) = ev;
+            // Ignore stale fetches (user already swapped to another URL).
+            if self.config.yt_playlist_url.as_deref() != Some(&url) {
+                continue;
+            }
+            self.yt_playlist_loading = false;
+            match res {
+                Ok(tracks) => {
+                    self.yt_playlist = tracks;
+                    self.yt_playlist_selected = 0;
+                    self.persist_yt_playlist();
+                    self.status = format!("YT playlist loaded ({} tracks)", self.yt_playlist.len());
+                }
+                Err(e) => {
+                    self.status = format!("YT playlist failed: {}", e);
+                }
+            }
+        }
+        while let Ok(ev) = self.local_folder_events_rx.try_recv() {
+            let LocalFolderEvent::Done(folder, tracks) = ev;
+            // Stale: a fresher scan was started against another folder.
+            if self.config.local_folder.as_deref() != Some(&folder) {
+                continue;
+            }
+            self.local_folder_scanning = false;
+            self.local_folder = tracks;
+            self.local_folder_selected = 0;
+            self.persist_local_folder();
+            self.status = format!("Folder scan: {} files", self.local_folder.len());
         }
         while let Ok(ev) = self.caption_events_rx.try_recv() {
             let CaptionEvent::Done(id, res) = ev;
@@ -799,6 +961,8 @@ impl App {
         match self.focus {
             ListFocus::Results => self.selected = new as usize,
             ListFocus::Playlist => self.playlist_selected = new as usize,
+            ListFocus::YtPlaylist => self.yt_playlist_selected = new as usize,
+            ListFocus::LocalFolder => self.local_folder_selected = new as usize,
         }
     }
 
@@ -813,22 +977,37 @@ impl App {
                 let Some(track) = self.results.get(self.selected).cloned() else {
                     return;
                 };
-                let (idx, was_new) =
-                    match self.playlist.iter().position(|t| t.id == track.id) {
-                        Some(i) => (i, false),
-                        None => {
-                            self.playlist.push(track);
-                            self.persist_playlist();
-                            (self.playlist.len() - 1, true)
-                        }
-                    };
-                self.play_at(idx);
-                if was_new {
-                    // play_at already set "[N/M] ...". Prepend a "+" so the
-                    // user sees it was added.
-                    self.status = format!("+ {}", self.status);
-                }
+                self.play_added_track(track);
             }
+            ListFocus::YtPlaylist => {
+                let Some(track) = self.yt_playlist.get(self.yt_playlist_selected).cloned() else {
+                    return;
+                };
+                self.play_added_track(track);
+            }
+            ListFocus::LocalFolder => {
+                let Some(track) = self.local_folder.get(self.local_folder_selected).cloned() else {
+                    return;
+                };
+                self.play_added_track(track);
+            }
+        }
+    }
+
+    fn play_added_track(&mut self, track: Track) {
+        let (idx, was_new) = match self.playlist.iter().position(|t| t.id == track.id) {
+            Some(i) => (i, false),
+            None => {
+                self.playlist.push(track);
+                self.persist_playlist();
+                (self.playlist.len() - 1, true)
+            }
+        };
+        self.play_at(idx);
+        if was_new {
+            // play_at already set "[N/M] ...". Prepend a "+" so the user
+            // can see it was added.
+            self.status = format!("+ {}", self.status);
         }
     }
 

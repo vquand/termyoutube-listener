@@ -137,7 +137,7 @@ fn draw_shortcuts(f: &mut Frame, app: &App, area: Rect) {
     // adjacent panel titles.
     let entries = [
         ("?", "help"),
-        ("p", "params"),
+        ("`", "params"),
         ("/", "nerd"),
         ("q", "quit"),
         (".", "hide"),
@@ -330,17 +330,32 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Yellow),
             )
         }
+        Mode::YtPlaylistInput => {
+            let mut spans = vec![Span::raw(" YT playlist URL ")];
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("↵", "load"));
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("esc", "cancel"));
+            spans.push(Span::raw(" "));
+            (
+                Line::from(spans),
+                format!("{}_", app.query),
+                Style::default().fg(Color::Yellow),
+            )
+        }
         _ => {
             let mut spans = vec![Span::raw(" Search ")];
             spans.push(shortcut_sep());
             spans.extend(shortcut_pair("s", "search"));
             spans.push(shortcut_sep());
             spans.extend(shortcut_pair("o", "open file"));
+            spans.push(shortcut_sep());
+            spans.extend(shortcut_pair("p", "yt playlist"));
             spans.push(Span::raw(" "));
             (
                 Line::from(spans),
                 if app.query.is_empty() {
-                    "Press `s` to search YouTube, `o` to open a local file...".to_string()
+                    "Press `s` to search, `o` to open file, `p` to load a YT playlist...".to_string()
                 } else {
                     app.query.clone()
                 },
@@ -357,6 +372,8 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     let (tracks, selected) = match app.focus {
         ListFocus::Results => (app.results.as_slice(), app.selected),
         ListFocus::Playlist => (app.playlist.as_slice(), app.playlist_selected),
+        ListFocus::YtPlaylist => (app.yt_playlist.as_slice(), app.yt_playlist_selected),
+        ListFocus::LocalFolder => (app.local_folder.as_slice(), app.local_folder_selected),
     };
 
     let current_id = app.current_track().map(|t| t.id.clone());
@@ -378,8 +395,18 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
-                Span::styled(t.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
             ];
+            if let Some(d) = t.local_depth {
+                spans.push(Span::styled(
+                    crate::local_scan::depth_marker(d),
+                    Style::default().fg(Color::DarkGray),
+                ));
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(
+                t.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
             if !t.is_local() && !t.uploader.is_empty() {
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled(
@@ -390,6 +417,33 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
             ListItem::new(Line::from(spans))
         })
         .collect();
+
+    let items = if items.is_empty() {
+        let hint = match app.focus {
+            ListFocus::Results => "Press `s` to search YouTube, `o` to open a local file or folder...",
+            ListFocus::Playlist => "Playlist is empty. Add tracks with `+` from any source tab.",
+            ListFocus::YtPlaylist => {
+                if app.yt_playlist_loading {
+                    "loading..."
+                } else {
+                    "Press `p` to load a public YouTube playlist URL."
+                }
+            }
+            ListFocus::LocalFolder => {
+                if app.local_folder_scanning {
+                    "scanning..."
+                } else {
+                    "Press `o` and give a directory path to scan (recursive, up to depth 4)."
+                }
+            }
+        };
+        vec![ListItem::new(Line::from(Span::styled(
+            format!("  {}", hint),
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        items
+    };
 
     let title = build_tab_title(app);
     let list = List::new(items)
@@ -496,35 +550,47 @@ fn build_tab_title(app: &App) -> Line<'static> {
         format!("Results ({})", app.results.len())
     };
     let playlist_label = format!("Playlist ({})", app.playlist.len());
-    let mut spans: Vec<Span> = match app.focus {
-        ListFocus::Results => vec![
-            Span::raw(" [ "),
-            Span::styled(results_label, active),
-            Span::raw(" ]  "),
-            Span::styled(playlist_label, inactive),
-        ],
-        ListFocus::Playlist => vec![
-            Span::raw(" "),
-            Span::styled(results_label, inactive),
-            Span::raw("  [ "),
-            Span::styled(playlist_label, active),
-            Span::raw(" ] "),
-        ],
+    let yt_label = if app.yt_playlist_loading {
+        "YT Playlist (loading…)".to_string()
+    } else {
+        format!("YT Playlist ({})", app.yt_playlist.len())
     };
+    let local_label = {
+        let name = app
+            .config
+            .local_folder_label
+            .as_deref()
+            .unwrap_or("—");
+        if app.local_folder_scanning {
+            format!("⌂: {} (scanning…)", name)
+        } else {
+            format!("⌂: {} ({})", name, app.local_folder.len())
+        }
+    };
+
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for (label, focus) in [
+        (results_label, ListFocus::Results),
+        (playlist_label, ListFocus::Playlist),
+        (yt_label, ListFocus::YtPlaylist),
+        (local_label, ListFocus::LocalFolder),
+    ] {
+        if app.focus == focus {
+            spans.push(Span::raw("[ "));
+            spans.push(Span::styled(label, active));
+            spans.push(Span::raw(" ]  "));
+        } else {
+            spans.push(Span::styled(label, inactive));
+            spans.push(Span::raw("  "));
+        }
+    }
+
     if app.config.show_shortcuts {
-        let context = match app.focus {
-            ListFocus::Results => [
-                ("⇥", "switch"),
-                ("+", "add"),
-                ("↵", "play"),
-                ("y", "URL"),
-            ],
-            ListFocus::Playlist => [
-                ("⇥", "switch"),
-                ("-", "remove"),
-                ("↵", "play"),
-                ("y", "URL"),
-            ],
+        let context: &[(&str, &str)] = match app.focus {
+            ListFocus::Results => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("y", "URL")],
+            ListFocus::Playlist => &[("⇥", "switch"), ("-", "remove"), ("↵", "play"), ("y", "URL")],
+            ListFocus::YtPlaylist => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("p", "change URL")],
+            ListFocus::LocalFolder => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("o", "change folder")],
         };
         for (k, l) in context.iter() {
             spans.push(shortcut_sep());
@@ -665,7 +731,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let w = 60.min(area.width.saturating_sub(4));
-    let h = 27.min(area.height.saturating_sub(4));
+    let h = 29.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };
@@ -691,7 +757,9 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  z / x    Volume down / up (10% steps)"),
         Line::from("  c        Toggle closed captions"),
         Line::from("  y        Yank (copy) selected track URL"),
-        Line::from("  p        Parameters menu"),
+        Line::from("  o        Open a local file or scan a folder (search bar)"),
+        Line::from("  p        Load a YouTube playlist URL (search bar)"),
+        Line::from("  `        Parameters menu"),
         Line::from("  .        Hide / show shortcut bar"),
         Line::from("  ?        Toggle this help"),
         Line::from("  q        Quit"),

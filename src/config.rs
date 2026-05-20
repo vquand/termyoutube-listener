@@ -37,6 +37,9 @@ pub struct Config {
     pub shuffle: bool,
     pub show_shortcuts: bool,
     pub volume: u8,
+    pub yt_playlist_url: Option<String>,
+    pub local_folder: Option<String>,
+    pub local_folder_label: Option<String>,
 }
 
 impl Default for Config {
@@ -47,6 +50,9 @@ impl Default for Config {
             shuffle: false,
             show_shortcuts: true,
             volume: 80,
+            yt_playlist_url: None,
+            local_folder: None,
+            local_folder_label: None,
         }
     }
 }

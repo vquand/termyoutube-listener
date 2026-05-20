@@ -58,7 +58,9 @@ arrow-key dependencies, no OS-specific media keys.
 | `z` / `x` | Volume down / up (10% steps)        |
 | `c`       | Toggle closed captions strip        |
 | `y`       | Yank (copy) selected track URL      |
-| `p`       | Open parameters menu                |
+| `o`       | Open a local file or scan a folder (search bar input) |
+| `p`       | Load a YouTube playlist URL (search bar input) |
+| `` ` ``   | Open parameters menu                |
 | `.`       | Hide / show shortcut bar            |
 | `?`       | Toggle help overlay                 |
 | `q`       | Quit (also `Ctrl-C`)                |
