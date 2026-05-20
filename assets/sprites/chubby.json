@@ -1,0 +1,8 @@
+{
+  "name": "chubby lung",
+  "frames": ["^(¬_¬)^", "^(¬.¬)^"],
+  "trail_left": "≈",
+  "trail_right": " ",
+  "accent": "green",
+  "order": 5
+}

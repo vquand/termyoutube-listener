@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub id: String,
     pub title: String,
@@ -89,4 +89,9 @@ pub fn check_installed() -> Result<()> {
         .output()
         .context("yt-dlp not found on PATH. Install it: `brew install yt-dlp` or see https://github.com/yt-dlp/yt-dlp")?;
     Ok(())
+}
+
+pub fn version() -> Option<String> {
+    let out = Command::new("yt-dlp").arg("--version").output().ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

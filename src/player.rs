@@ -23,6 +23,10 @@ pub struct PlayerState {
     pub duration: f64,
     pub idle: bool,
     pub eof_reached: bool,
+    pub audio_codec: Option<String>,
+    pub audio_bitrate: Option<f64>,
+    pub samplerate: Option<u32>,
+    pub channels: Option<u32>,
 }
 
 impl Player {
@@ -99,6 +103,26 @@ impl Player {
                                         s.eof_reached = b;
                                     }
                                 }
+                                "audio-codec-name" => {
+                                    s.audio_codec = data
+                                        .and_then(|d| d.as_str())
+                                        .map(|x| x.to_string());
+                                }
+                                "audio-bitrate" => {
+                                    s.audio_bitrate = data.and_then(|d| d.as_f64());
+                                }
+                                "audio-params" => {
+                                    if let Some(obj) = data.and_then(|d| d.as_object()) {
+                                        s.samplerate = obj
+                                            .get("samplerate")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|x| x as u32);
+                                        s.channels = obj
+                                            .get("channels")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|x| x as u32);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -130,6 +154,9 @@ impl Player {
         player.observe("pause")?;
         player.observe("idle-active")?;
         player.observe("eof-reached")?;
+        player.observe("audio-codec-name")?;
+        player.observe("audio-bitrate")?;
+        player.observe("audio-params")?;
         Ok(player)
     }
 
@@ -195,4 +222,11 @@ pub fn check_installed() -> Result<()> {
         .output()
         .context("mpv not found on PATH. Install it: `brew install mpv` or see https://mpv.io")?;
     Ok(())
+}
+
+/// Best-effort one-shot version probe. Returns the first line of `mpv --version`.
+pub fn version() -> Option<String> {
+    let out = Command::new("mpv").arg("--version").output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    s.lines().next().map(|l| l.trim().to_string())
 }

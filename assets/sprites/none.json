@@ -1,0 +1,8 @@
+{
+  "name": "none",
+  "frames": [""],
+  "trail_left": "█",
+  "trail_right": "░",
+  "accent": "cyan",
+  "order": 0
+}

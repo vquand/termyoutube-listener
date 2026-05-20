@@ -1,0 +1,8 @@
+{
+  "name": "nyan",
+  "frames": ["~=[,,_,,]:3", "-=[,,_,,]:3"],
+  "trail_left": "=",
+  "trail_right": " ",
+  "accent": "magenta",
+  "order": 1
+}

@@ -1,7 +1,10 @@
 mod app;
 mod captions;
 mod clipboard;
+mod config;
 mod player;
+mod playlist;
+mod sprites;
 mod stats;
 mod ui;
 mod ytdlp;
@@ -29,7 +32,10 @@ fn main() -> Result<()> {
     }
 
     let player = Player::spawn()?;
-    let mut app = App::new(player);
+    let cfg = config::load();
+    let registry = sprites::Registry::load();
+    let pl = playlist::load();
+    let mut app = App::new(player, cfg, registry, pl);
 
     let mut terminal = setup_terminal()?;
     let res = run(&mut terminal, &mut app);
@@ -81,6 +87,10 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
         Mode::Help => {
             app.mode = Mode::Browse;
         }
+        Mode::Nerd => match code {
+            KeyCode::Esc | KeyCode::Char('/') | KeyCode::Char('q') => app.mode = Mode::Browse,
+            _ => {}
+        },
         Mode::Searching => match code {
             KeyCode::Esc => app.cancel_search(),
             KeyCode::Enter => app.submit_search(),
@@ -101,9 +111,18 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Char('q') => app.should_quit = true,
                 KeyCode::Char('s') => app.enter_search(),
                 KeyCode::Char('?') => app.mode = Mode::Help,
-                KeyCode::Char('t') => app.toggle_stats(),
+                KeyCode::Char('/') => app.toggle_nerd(),
                 KeyCode::Char('c') => app.toggle_captions(),
                 KeyCode::Char('y') => app.yank_selected_url(),
+                KeyCode::Char('p') => app.open_params(),
+                KeyCode::Tab => app.switch_focus(),
+                KeyCode::Char('+') => app.add_focused_to_playlist(),
+                KeyCode::Char('-') | KeyCode::Backspace | KeyCode::Delete => {
+                    app.remove_focused_from_playlist()
+                }
+                KeyCode::Char('L') | KeyCode::Char('l') => app.cycle_loop(),
+                KeyCode::Char('H') | KeyCode::Char('h') => app.toggle_shuffle(),
+                KeyCode::Char('.') => app.toggle_shortcuts(),
                 KeyCode::Char(' ') => app.toggle_pause(),
                 KeyCode::Enter => app.play_selected(),
                 KeyCode::Char('n') => app.next_track(),
@@ -117,5 +136,11 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 _ => {}
             }
         }
+        Mode::Params => match code {
+            KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('q') => app.close_params(),
+            KeyCode::Left | KeyCode::Char('h') => app.params_change(-1),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => app.params_change(1),
+            _ => {}
+        },
     }
 }

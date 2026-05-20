@@ -1,0 +1,8 @@
+{
+  "name": "pacman",
+  "frames": ["C", "c"],
+  "trail_left": " ",
+  "trail_right": "·",
+  "accent": "yellow",
+  "order": 4
+}
