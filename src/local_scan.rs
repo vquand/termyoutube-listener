@@ -1,4 +1,4 @@
-use crate::ytdlp::Track;
+use crate::ytdlp::{Platform, Track};
 use std::path::Path;
 
 const PLAYABLE: &[&str] = &[
@@ -53,6 +53,7 @@ fn walk(dir: &Path, depth: u8, out: &mut Vec<Track>) {
                 duration: None,
                 source: Some(p),
                 local_depth: Some(depth),
+                platform: Some(Platform::Local),
             });
         }
     }

@@ -272,6 +272,30 @@ fn write_open_debug_log(
     path
 }
 
+/// Parse a search-bar query into (platforms_to_query, cleaned_query).
+/// A `#Y` / `#B` / `#home` token at the start scopes the search to one
+/// platform; anything else searches all three.
+fn parse_search_filter(input: &str) -> (Vec<ytdlp::Platform>, String) {
+    let trimmed = input.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("").trim().to_string();
+    let upper = first.to_uppercase();
+    match upper.as_str() {
+        "#Y" | "#YT" | "#YOUTUBE" => (vec![ytdlp::Platform::YouTube], rest),
+        "#B" | "#BILI" | "#BILIBILI" => (vec![ytdlp::Platform::Bilibili], rest),
+        "#H" | "#HOME" | "#LOCAL" => (vec![ytdlp::Platform::Local], rest),
+        _ => (
+            vec![
+                ytdlp::Platform::YouTube,
+                ytdlp::Platform::Bilibili,
+                ytdlp::Platform::Local,
+            ],
+            trimmed.to_string(),
+        ),
+    }
+}
+
 fn rand_index_excluding(n: usize, except: usize) -> usize {
     if n <= 1 {
         return 0;
@@ -457,6 +481,8 @@ pub struct App {
     pub local_folder_events_rx: Receiver<LocalFolderEvent>,
     local_folder_events_tx: Sender<LocalFolderEvent>,
     pub duration_backfill_rx: Receiver<DurationBackfillEvent>,
+    pending_searches: usize,
+    current_search_query: Option<String>,
 }
 
 impl App {
@@ -519,6 +545,8 @@ impl App {
             local_folder_events_rx: lf_rx,
             local_folder_events_tx: lf_tx,
             duration_backfill_rx: spawn_duration_backfill(&[]),
+            pending_searches: 0,
+            current_search_query: None,
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
@@ -879,7 +907,7 @@ impl App {
         if let Some(current) = self.config.yt_playlist_url.clone() {
             self.query = current;
         }
-        self.status = "Paste a YouTube playlist URL and press Enter. Esc to cancel.".into();
+        self.status = "Paste a YouTube or Bilibili playlist URL and press Enter. Esc to cancel.".into();
     }
 
     pub fn cancel_yt_playlist_input(&mut self) {
@@ -961,6 +989,7 @@ impl App {
             duration,
             source: Some(path_str.clone()),
             local_depth: None,
+            platform: Some(ytdlp::Platform::Local),
         };
         let idx = match self.playlist.iter().position(|t| t.id == track.id) {
             Some(i) => {
@@ -983,34 +1012,102 @@ impl App {
     }
 
     pub fn submit_search(&mut self) {
-        let q = self.query.trim().to_string();
-        if q.is_empty() {
+        let raw = self.query.trim().to_string();
+        if raw.is_empty() {
             self.mode = Mode::Browse;
             return;
         }
         self.mode = Mode::Browse;
+        let (platforms, query) = parse_search_filter(&raw);
+        if query.is_empty() {
+            self.status = "Empty search after filter".into();
+            return;
+        }
+
+        // Reset state for this new search.
+        self.results.clear();
+        self.selected = 0;
+        self.current_search_query = Some(query.clone());
+        self.pending_searches = 0;
         self.searching = true;
-        self.status = format!("Searching: {} ...", q);
-        let tx = self.events_tx.clone();
-        let q_clone = q.clone();
-        thread::spawn(move || {
-            let res = ytdlp::search(&q_clone, 20);
-            let _ = tx.send(SearchEvent::Done(q_clone, res));
-        });
+        let scope_label = if platforms.len() == 3 {
+            "all".to_string()
+        } else {
+            platforms
+                .iter()
+                .map(|p| match p {
+                    ytdlp::Platform::YouTube => "Y",
+                    ytdlp::Platform::Bilibili => "B",
+                    ytdlp::Platform::Local => "⌂",
+                })
+                .collect::<Vec<_>>()
+                .join("+")
+        };
+        self.status = format!("Searching ({}): {} ...", scope_label, query);
+
+        // Local search is synchronous and instant.
+        if platforms.contains(&ytdlp::Platform::Local) {
+            let q_lower = query.to_lowercase();
+            let mut local_hits: Vec<Track> = self
+                .local_folder
+                .iter()
+                .filter(|t| t.title.to_lowercase().contains(&q_lower))
+                .cloned()
+                .collect();
+            self.results.append(&mut local_hits);
+        }
+
+        // YouTube and Bilibili in parallel background threads.
+        for platform in platforms {
+            if matches!(platform, ytdlp::Platform::Local) {
+                continue;
+            }
+            let tx = self.events_tx.clone();
+            let q_clone = query.clone();
+            self.pending_searches += 1;
+            thread::spawn(move || {
+                let res = ytdlp::search(&q_clone, 20, platform);
+                let _ = tx.send(SearchEvent::Done(q_clone, res));
+            });
+        }
+
+        if self.pending_searches == 0 {
+            self.searching = false;
+            self.status = format!(
+                "Local results: {} for \"{}\".",
+                self.results.len(),
+                query
+            );
+        }
     }
 
     pub fn drain_events(&mut self) {
         while let Ok(ev) = self.events_rx.try_recv() {
             match ev {
-                SearchEvent::Done(q, Ok(tracks)) => {
-                    self.searching = false;
-                    self.results = tracks;
-                    self.selected = 0;
-                    self.status = format!("Found {} results for \"{}\".", self.results.len(), q);
-                }
-                SearchEvent::Done(_, Err(e)) => {
-                    self.searching = false;
-                    self.status = format!("Search failed: {}", e);
+                SearchEvent::Done(q, res) => {
+                    // Ignore stale results from a previous query.
+                    if self.current_search_query.as_deref() != Some(q.as_str()) {
+                        continue;
+                    }
+                    match res {
+                        Ok(mut tracks) => {
+                            self.results.append(&mut tracks);
+                        }
+                        Err(e) => {
+                            self.status = format!("Search failed: {}", e);
+                        }
+                    }
+                    if self.pending_searches > 0 {
+                        self.pending_searches -= 1;
+                    }
+                    if self.pending_searches == 0 {
+                        self.searching = false;
+                        self.status = format!(
+                            "Found {} results for \"{}\".",
+                            self.results.len(),
+                            q
+                        );
+                    }
                 }
             }
         }

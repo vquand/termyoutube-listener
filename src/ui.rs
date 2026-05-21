@@ -426,7 +426,7 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
                 if app.yt_playlist_loading {
                     "loading..."
                 } else {
-                    "Press `p` to load a public YouTube playlist URL."
+                    "Press `p` to load a public YouTube or Bilibili playlist URL."
                 }
             }
             ListFocus::LocalFolder => {
@@ -446,8 +446,12 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let title = build_tab_title(app);
+    let mut block = Block::default().borders(Borders::ALL).title(title);
+    if let Some(total) = total_duration_for_focus(app, tracks) {
+        block = block.title(total.right_aligned());
+    }
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(block)
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -461,6 +465,33 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         state.select(Some(selected.min(tracks.len() - 1)));
     }
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn total_duration_for_focus(app: &App, tracks: &[crate::ytdlp::Track]) -> Option<Line<'static>> {
+    // Results tab doesn't get a total — by design.
+    if app.focus == ListFocus::Results || tracks.is_empty() {
+        return None;
+    }
+    let total: u64 = tracks.iter().filter_map(|t| t.duration).sum();
+    if total == 0 {
+        return None;
+    }
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    let body = if h > 0 {
+        format!("{}h {:02}m", h, m)
+    } else {
+        format!("{}:{:02}", m, s)
+    };
+    Some(Line::from(vec![
+        Span::styled(" total ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            body,
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ]))
 }
 
 fn build_device_title(app: &App) -> Line<'static> {
@@ -490,7 +521,14 @@ fn queue_source_label(app: &App) -> String {
     match app.queue_source {
         QueueSource::Results => "search results".to_string(),
         QueueSource::Playlist => "Playlist".to_string(),
-        QueueSource::YtPlaylist => "YT Playlist".to_string(),
+        QueueSource::YtPlaylist => match app.config.yt_playlist_url.as_deref() {
+            Some(url)
+                if crate::ytdlp::platform_from_url(url) == crate::ytdlp::Platform::Bilibili =>
+            {
+                "B Playlist".to_string()
+            }
+            _ => "Y Playlist".to_string(),
+        },
         QueueSource::LocalFolder => {
             let name = app
                 .config
@@ -574,10 +612,21 @@ fn build_tab_title(app: &App) -> Line<'static> {
         format!("Results ({})", app.results.len())
     };
     let playlist_label = format!("Playlist ({})", app.playlist.len());
-    let yt_label = if app.yt_playlist_loading {
-        "YT Playlist (loading…)".to_string()
-    } else {
-        format!("YT Playlist ({})", app.yt_playlist.len())
+    let yt_label = {
+        let prefix = match app.config.yt_playlist_url.as_deref() {
+            Some(url)
+                if crate::ytdlp::platform_from_url(url) == crate::ytdlp::Platform::Bilibili =>
+            {
+                "B Playlist"
+            }
+            Some(_) => "Y Playlist",
+            None => "Platform Playlist",
+        };
+        if app.yt_playlist_loading {
+            format!("{} (loading…)", prefix)
+        } else {
+            format!("{} ({})", prefix, app.yt_playlist.len())
+        }
     };
     let local_label = {
         let name = app
@@ -782,7 +831,7 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  c        Toggle closed captions"),
         Line::from("  y        Yank (copy) selected track URL"),
         Line::from("  o        Open a local file or scan a folder (search bar)"),
-        Line::from("  p        Load a YouTube playlist URL (search bar)"),
+        Line::from("  p        Load YT/Bilibili playlist URL (search bar)"),
         Line::from("  `        Parameters menu"),
         Line::from("  .        Hide / show shortcut bar"),
         Line::from("  ?        Toggle this help"),
