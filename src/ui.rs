@@ -683,16 +683,17 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let st = app.player_state();
-    let track_line = match app.current_track() {
+    let (marker, title_text) = match app.current_track() {
         Some(t) => {
             let pause = if st.paused { "⏸ " } else { "▶ " };
-            if t.is_local() || t.uploader.is_empty() {
-                format!("{}{}", pause, t.title)
+            let body = if t.is_local() || t.uploader.is_empty() {
+                t.title.clone()
             } else {
-                format!("{}{} — {}", pause, t.title, t.uploader)
-            }
+                format!("{} — {}", t.title, t.uploader)
+            };
+            (pause, body)
         }
-        None => "(nothing playing — pick a track and press Enter)".to_string(),
+        None => ("  ", "(nothing playing — pick a track and press Enter)".to_string()),
     };
 
     let rows = Layout::default()
@@ -700,27 +701,119 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
-    let p = Paragraph::new(track_line).wrap(Wrap { trim: true });
-    f.render_widget(p, rows[0]);
-
     let (pos, dur) = (st.position.max(0.0), st.duration.max(0.0));
+    let label = if app.current_track().is_some() {
+        format!("  {}  /  {}", fmt_secs(pos), fmt_secs(dur))
+    } else {
+        String::new()
+    };
+    let label_w = cell_width(&label);
+    let marker_w = cell_width(marker);
+    let row_w = rows[0].width as usize;
+    let title_max = row_w
+        .saturating_sub(marker_w)
+        .saturating_sub(label_w)
+        .max(8);
+    let title_part = marquee(&title_text, title_max);
+    let dim = Style::default().fg(Color::DarkGray);
+    let title_line = Line::from(vec![
+        Span::styled(marker.to_string(), Style::default().fg(Color::Green)),
+        Span::raw(title_part),
+        Span::styled(label, dim),
+    ]);
+    f.render_widget(Paragraph::new(title_line), rows[0]);
+
     let ratio = if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) } else { 0.0 };
-    let label = format!("  {}  /  {}", fmt_secs(pos), fmt_secs(dur));
-    let label_width = label.chars().count() as u16;
-    // Cap the bar so double-wide unicode in some sprite trails cannot
-    // push the time label off-screen, and so it does not stretch
-    // absurdly wide on huge terminals.
     const MAX_BAR: u16 = 80;
     const SAFETY: u16 = 4;
-    let bar_width = rows[1]
-        .width
-        .saturating_sub(label_width)
-        .saturating_sub(SAFETY)
-        .min(MAX_BAR);
-
-    let mut spans = cursor_spans(app.current_sprite(), ratio, bar_width);
-    spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+    let bar_width = rows[1].width.saturating_sub(SAFETY).min(MAX_BAR);
+    let spans = cursor_spans(app.current_sprite(), ratio, bar_width);
     f.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
+}
+
+/// Display-cell width of one char. Covers CJK + full-width punctuation
+/// (the common cases in this UI) without pulling in `unicode-width`.
+fn char_cells(c: char) -> usize {
+    if c.is_control() {
+        return 0;
+    }
+    let code = c as u32;
+    let wide = matches!(
+        code,
+        0x1100..=0x115F        // Hangul Jamo
+        | 0x2E80..=0x303E      // CJK radicals, Kangxi, CJK symbols start
+        | 0x3041..=0x33FF      // Hiragana, Katakana, CJK symbols
+        | 0x3400..=0x4DBF      // CJK extension A
+        | 0x4E00..=0x9FFF      // CJK unified ideographs
+        | 0xA000..=0xA4CF      // Yi
+        | 0xAC00..=0xD7A3      // Hangul syllables
+        | 0xF900..=0xFAFF      // CJK compat ideographs
+        | 0xFE30..=0xFE4F      // CJK compat forms
+        | 0xFF00..=0xFF60      // Fullwidth ASCII
+        | 0xFFE0..=0xFFE6      // Fullwidth signs
+    );
+    if wide {
+        2
+    } else {
+        1
+    }
+}
+
+fn cell_width(s: &str) -> usize {
+    s.chars().map(char_cells).sum()
+}
+
+/// Pad a short title to `max_cells` or scroll it like a banner ad when it
+/// is wider than the row. Steps one *char* per ~300ms so CJK content still
+/// reads smoothly even though each glyph eats two cells.
+fn marquee(title: &str, max_cells: usize) -> String {
+    if max_cells == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = title.chars().collect();
+    let title_w = cell_width(title);
+    if title_w <= max_cells {
+        // Fits — render as-is, padded right with spaces so trailing
+        // content (the time label) lands flush against the row edge.
+        let mut s: String = chars.iter().collect();
+        for _ in 0..(max_cells - title_w) {
+            s.push(' ');
+        }
+        return s;
+    }
+
+    let separator: Vec<char> = "   •   ".chars().collect();
+    let combined: Vec<char> = chars.iter().chain(separator.iter()).cloned().collect();
+    let cycle_len = combined.len();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    const STEP_MS: u128 = 300;
+    let offset = (now_ms / STEP_MS) as usize % cycle_len;
+
+    let mut out = String::with_capacity(max_cells * 4);
+    let mut used = 0usize;
+    let mut i = 0usize;
+    while used < max_cells && i < cycle_len * 2 {
+        let c = combined[(offset + i) % cycle_len];
+        let w = char_cells(c);
+        if used + w > max_cells {
+            // Next glyph would overflow (a CJK char sneaking past the
+            // boundary): pad the remaining cell with a space and stop.
+            out.push(' ');
+            used += 1;
+            break;
+        }
+        out.push(c);
+        used += w;
+        i += 1;
+    }
+    while used < max_cells {
+        out.push(' ');
+        used += 1;
+    }
+    out
 }
 
 fn cursor_spans(sprite: &Sprite, ratio: f64, width: u16) -> Vec<Span<'static>> {
