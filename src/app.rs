@@ -5,6 +5,7 @@ use crate::config::{self, Config, LoopMode};
 use crate::player::{Player, PlayerState};
 use crate::local_scan;
 use crate::playlist::{self, Playlist};
+use crate::probe;
 use crate::sprites::{Registry, Sprite};
 use crate::stats::{Stats, StatsSampler};
 use crate::ytdlp::{self, Track};
@@ -282,6 +283,76 @@ fn rand_index_excluding(n: usize, except: usize) -> usize {
     idx
 }
 
+/// Spawn one background worker that probes the duration of each
+/// `(track_id, source_path)` pair and emits a single batched event when
+/// done. If `targets` is empty the channel is closed immediately so the
+/// drain loop just sees no events.
+fn spawn_duration_backfill(
+    targets: &[(String, String)],
+) -> Receiver<DurationBackfillEvent> {
+    let (tx, rx) = mpsc::channel();
+    if targets.is_empty() {
+        drop(tx);
+        return rx;
+    }
+    let owned: Vec<(String, String)> = targets.to_vec();
+    thread::spawn(move || {
+        let mut updates = Vec::new();
+        for (id, src) in owned {
+            if let Some(d) = probe::duration(std::path::Path::new(&src)) {
+                updates.push((id, d));
+            }
+        }
+        if !updates.is_empty() {
+            let _ = tx.send(DurationBackfillEvent::Done(updates));
+        }
+    });
+    rx
+}
+
+/// Probe each track's duration in chunks across a small fixed-size thread
+/// pool. ffprobe is single-threaded per file but mostly IO-bound, so a
+/// handful of parallel workers cuts wall-clock significantly without
+/// thrashing.
+fn probe_durations_parallel(tracks: Vec<Track>) -> Vec<Track> {
+    if tracks.is_empty() {
+        return tracks;
+    }
+    const WORKERS: usize = 4;
+    let chunks: Vec<Vec<Track>> = {
+        let n = tracks.len();
+        let stride = n.div_ceil(WORKERS);
+        let mut iter = tracks.into_iter();
+        (0..WORKERS)
+            .map(|_| iter.by_ref().take(stride).collect())
+            .filter(|c: &Vec<Track>| !c.is_empty())
+            .collect()
+    };
+    let handles: Vec<_> = chunks
+        .into_iter()
+        .map(|mut chunk| {
+            thread::spawn(move || {
+                for t in chunk.iter_mut() {
+                    if t.duration.is_some() {
+                        continue;
+                    }
+                    if let Some(src) = &t.source {
+                        t.duration = probe::duration(std::path::Path::new(src));
+                    }
+                }
+                chunk
+            })
+        })
+        .collect();
+    let mut out = Vec::new();
+    for h in handles {
+        if let Ok(chunk) = h.join() {
+            out.extend(chunk);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Browse,
@@ -320,6 +391,13 @@ pub enum YtPlaylistEvent {
 
 pub enum LocalFolderEvent {
     Done(String, Vec<Track>),
+}
+
+pub enum DurationBackfillEvent {
+    /// (track id, probed duration in seconds). Track ids for local files
+    /// are absolute paths, so the same value can backfill duplicates
+    /// across the Playlist and Local Folder lists in one pass.
+    Done(Vec<(String, u64)>),
 }
 
 pub enum CaptionEvent {
@@ -378,6 +456,7 @@ pub struct App {
     pub local_folder_scanning: bool,
     pub local_folder_events_rx: Receiver<LocalFolderEvent>,
     local_folder_events_tx: Sender<LocalFolderEvent>,
+    pub duration_backfill_rx: Receiver<DurationBackfillEvent>,
 }
 
 impl App {
@@ -396,7 +475,7 @@ impl App {
         let (lf_tx, lf_rx) = mpsc::channel();
         audio::spawn_poller(dev_tx);
         let sampler = StatsSampler::new(player.pid());
-        let app = Self {
+        let mut app = Self {
             mode: Mode::Browse,
             query: String::new(),
             results: Vec::new(),
@@ -439,10 +518,33 @@ impl App {
             local_folder_scanning: false,
             local_folder_events_rx: lf_rx,
             local_folder_events_tx: lf_tx,
+            duration_backfill_rx: spawn_duration_backfill(&[]),
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
+        // Backfill durations for any local tracks loaded from cache that
+        // were saved before the probe step existed.
+        app.duration_backfill_rx = app.spawn_duration_backfill();
         app
+    }
+
+    fn spawn_duration_backfill(&self) -> Receiver<DurationBackfillEvent> {
+        let mut targets: Vec<(String, String)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for list in [&self.playlist, &self.local_folder, &self.yt_playlist] {
+            for t in list.iter() {
+                if t.duration.is_some() {
+                    continue;
+                }
+                let Some(src) = t.source.as_ref() else {
+                    continue;
+                };
+                if seen.insert(t.id.clone()) {
+                    targets.push((t.id.clone(), src.clone()));
+                }
+            }
+        }
+        spawn_duration_backfill(&targets)
     }
 
     pub fn focused_len(&self) -> usize {
@@ -558,7 +660,12 @@ impl App {
         let path_clone = path.clone();
         let folder_key = folder_str.clone();
         thread::spawn(move || {
-            let tracks = local_scan::scan_folder(&path_clone);
+            let mut tracks = local_scan::scan_folder(&path_clone);
+            // Probe each file's duration so the list column is filled in
+            // before the user clicks Play. ffprobe takes ~50ms per file,
+            // so we run probes across a small thread pool to keep big
+            // libraries under control.
+            tracks = probe_durations_parallel(tracks);
             let _ = tx.send(LocalFolderEvent::Done(folder_key, tracks));
         });
     }
@@ -846,16 +953,24 @@ impl App {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path_str.clone());
+        let duration = probe::duration(&abs);
         let track = Track {
             id: path_str.clone(),
             title,
             uploader: String::new(),
-            duration: None,
+            duration,
             source: Some(path_str.clone()),
             local_depth: None,
         };
         let idx = match self.playlist.iter().position(|t| t.id == track.id) {
-            Some(i) => i,
+            Some(i) => {
+                // Backfill duration if a previous open stored None.
+                if self.playlist[i].duration.is_none() && track.duration.is_some() {
+                    self.playlist[i].duration = track.duration;
+                    self.persist_playlist();
+                }
+                i
+            }
             None => {
                 self.playlist.push(track);
                 self.persist_playlist();
@@ -932,6 +1047,36 @@ impl App {
             self.local_folder_selected = 0;
             self.persist_local_folder();
             self.status = format!("Folder scan: {} files", self.local_folder.len());
+        }
+        while let Ok(ev) = self.duration_backfill_rx.try_recv() {
+            let DurationBackfillEvent::Done(updates) = ev;
+            let mut changed_playlist = false;
+            let mut changed_local = false;
+            for (id, dur) in updates {
+                for t in self.playlist.iter_mut() {
+                    if t.id == id && t.duration.is_none() {
+                        t.duration = Some(dur);
+                        changed_playlist = true;
+                    }
+                }
+                for t in self.local_folder.iter_mut() {
+                    if t.id == id && t.duration.is_none() {
+                        t.duration = Some(dur);
+                        changed_local = true;
+                    }
+                }
+                for t in self.queue.iter_mut() {
+                    if t.id == id && t.duration.is_none() {
+                        t.duration = Some(dur);
+                    }
+                }
+            }
+            if changed_playlist {
+                self.persist_playlist();
+            }
+            if changed_local {
+                self.persist_local_folder();
+            }
         }
         while let Ok(ev) = self.caption_events_rx.try_recv() {
             let CaptionEvent::Done(id, res) = ev;

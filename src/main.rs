@@ -6,6 +6,7 @@ mod config;
 mod local_scan;
 mod player;
 mod playlist;
+mod probe;
 mod sprites;
 mod stats;
 mod ui;

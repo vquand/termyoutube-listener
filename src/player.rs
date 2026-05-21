@@ -187,7 +187,11 @@ impl Player {
             s.idle = false;
             s.paused = false;
         }
-        self.command(vec![json!("loadfile"), json!(url), json!("replace")])
+        self.command(vec![json!("loadfile"), json!(url), json!("replace")])?;
+        // mpv carries the previous `pause` state across loadfile, so an
+        // explicit unpause makes Enter-on-a-track behave like "play it"
+        // instead of "load it paused" when the user had paused earlier.
+        self.command(vec![json!("set_property"), json!("pause"), json!(false)])
     }
 
     pub fn toggle_pause(&self) -> Result<()> {
