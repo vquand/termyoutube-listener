@@ -369,11 +369,18 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_results(f: &mut Frame, app: &App, area: Rect) {
+    // The Y/B Playlist section actually carries two stacked panes: the
+    // library of saved playlists and the tracks of the active one. Render
+    // both together when either is focused.
+    if matches!(app.focus, ListFocus::YtLibrary | ListFocus::YtPlaylist) {
+        draw_remote_playlist_split(f, app, area);
+        return;
+    }
     let (tracks, selected) = match app.focus {
         ListFocus::Results => (app.results.as_slice(), app.selected),
         ListFocus::Playlist => (app.playlist.as_slice(), app.playlist_selected),
-        ListFocus::YtPlaylist => (app.yt_playlist.as_slice(), app.yt_playlist_selected),
         ListFocus::LocalFolder => (app.local_folder.as_slice(), app.local_folder_selected),
+        ListFocus::YtLibrary | ListFocus::YtPlaylist => unreachable!(),
     };
 
     let current_id = app.current_track().map(|t| t.id.clone());
@@ -422,13 +429,6 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         let hint = match app.focus {
             ListFocus::Results => "Press `s` to search YouTube, `o` to open a local file or folder...",
             ListFocus::Playlist => "Playlist is empty. Add tracks with `+` from any source tab.",
-            ListFocus::YtPlaylist => {
-                if app.yt_playlist_loading {
-                    "loading..."
-                } else {
-                    "Press `p` to load a public YouTube or Bilibili playlist URL."
-                }
-            }
             ListFocus::LocalFolder => {
                 if app.local_folder_scanning {
                     "scanning..."
@@ -436,6 +436,9 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
                     "Press `o` and give a directory path to scan (recursive, up to depth 4)."
                 }
             }
+            // YtLibrary / YtPlaylist render via draw_remote_playlist_split
+            // and never reach this branch.
+            ListFocus::YtLibrary | ListFocus::YtPlaylist => unreachable!(),
         };
         vec![ListItem::new(Line::from(Span::styled(
             format!("  {}", hint),
@@ -463,6 +466,232 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     let mut state = ListState::default();
     if !tracks.is_empty() {
         state.select(Some(selected.min(tracks.len() - 1)));
+    }
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_remote_playlist_split(f: &mut Frame, app: &App, area: Rect) {
+    // Outer block reuses the regular tab title so the user still sees
+    // [ Results · Playlist · Y Playlist · ⌂ ] context.
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .title(build_tab_title(app))
+        .title(
+            total_duration_for_focus(app, &app.yt_playlist)
+                .map(|l| l.right_aligned())
+                .unwrap_or_else(|| Line::from("")),
+        );
+    let inner = outer.inner(area);
+    f.render_widget(outer, area);
+
+    // Wider terminals get the library on the left; narrow ones stack it
+    // on top so each pane keeps a usable row count.
+    let horizontal = inner.width >= 110;
+    let panes = if horizontal {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(inner)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(inner)
+    };
+
+    draw_library_pane(f, app, panes[0], app.focus == ListFocus::YtLibrary);
+    draw_yt_tracks_pane(f, app, panes[1], app.focus == ListFocus::YtPlaylist);
+}
+
+fn draw_library_pane(f: &mut Frame, app: &App, area: Rect, focused: bool) {
+    let entries = &app.library.entries;
+    let active_url = app.config.yt_playlist_url.as_deref();
+    let items: Vec<ListItem> = entries
+        .iter()
+        .map(|e| {
+            let fav = if e.favorite { "★" } else { "☆" };
+            let glyph = match e.platform {
+                crate::ytdlp::Platform::Bilibili => "B",
+                crate::ytdlp::Platform::Local => "⌂",
+                _ => "Y",
+            };
+            let is_active = Some(e.url.as_str()) == active_url;
+            let active_marker = if is_active { "▶ " } else { "  " };
+            let line = Line::from(vec![
+                Span::styled(active_marker, Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{} ", fav),
+                    if e.favorite {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
+                Span::styled(
+                    format!("{} ", glyph),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    e.title.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("({})", e.track_count),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let items = if items.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "  Empty. Press `p` to add a playlist URL.".to_string(),
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        items
+    };
+
+    let title_style = if focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let mut title_spans = vec![
+        Span::raw(" "),
+        Span::styled(format!("Library ({})", entries.len()), title_style),
+        Span::raw(" "),
+    ];
+    if app.config.show_shortcuts {
+        for (k, l) in [
+            ("⇥", "switch"),
+            ("↵", "activate"),
+            ("f", "fav"),
+            ("d/⌫", "remove"),
+        ] {
+            title_spans.push(shortcut_sep());
+            title_spans.extend(shortcut_pair(k, l));
+        }
+        title_spans.push(Span::raw(" "));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from(title_spans));
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(if focused { Color::Blue } else { Color::DarkGray })
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("» ");
+
+    let mut state = ListState::default();
+    if !entries.is_empty() {
+        state.select(Some(app.library_selected.min(entries.len() - 1)));
+    }
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_yt_tracks_pane(f: &mut Frame, app: &App, area: Rect, focused: bool) {
+    let tracks = app.yt_playlist.as_slice();
+    let current_id = app.current_track().map(|t| t.id.clone());
+
+    let items: Vec<ListItem> = tracks
+        .iter()
+        .map(|t| {
+            let is_playing = current_id.as_deref() == Some(&t.id);
+            let marker = if is_playing { "▶ " } else { "  " };
+            let dur = t.duration_str();
+            let mut spans = vec![
+                Span::styled(marker, Style::default().fg(Color::Green)),
+                Span::raw(format!("{:>5}  ", dur)),
+                Span::styled(
+                    t.source_glyph().to_string(),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    t.title.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ];
+            if !t.is_local() && !t.uploader.is_empty() {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    format!("— {}", t.uploader),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let items = if items.is_empty() {
+        let hint = if app.yt_playlist_loading {
+            "loading..."
+        } else if app.config.yt_playlist_url.is_some() {
+            "No tracks. Pick an entry in Library and press Enter to reload."
+        } else {
+            "Press `p` to load a public YouTube or Bilibili playlist URL."
+        };
+        vec![ListItem::new(Line::from(Span::styled(
+            format!("  {}", hint),
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        items
+    };
+
+    let title_style = if focused {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let label = if app.yt_playlist_loading {
+        format!("Tracks (loading…)")
+    } else {
+        format!("Tracks ({})", tracks.len())
+    };
+    let mut title_spans = vec![Span::raw(" "), Span::styled(label, title_style), Span::raw(" ")];
+    if app.config.show_shortcuts {
+        for (k, l) in [("⇥", "switch"), ("+", "add"), ("↵", "play"), ("y", "URL")] {
+            title_spans.push(shortcut_sep());
+            title_spans.extend(shortcut_pair(k, l));
+        }
+        title_spans.push(Span::raw(" "));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Line::from(title_spans));
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(if focused { Color::Blue } else { Color::DarkGray })
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("» ");
+
+    let mut state = ListState::default();
+    if !tracks.is_empty() {
+        state.select(Some(app.yt_playlist_selected.min(tracks.len() - 1)));
     }
     f.render_stateful_widget(list, area, &mut state);
 }
@@ -642,13 +871,22 @@ fn build_tab_title(app: &App) -> Line<'static> {
     };
 
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    let focus_matches = |slot: ListFocus| -> bool {
+        match slot {
+            ListFocus::YtPlaylist => matches!(
+                app.focus,
+                ListFocus::YtPlaylist | ListFocus::YtLibrary
+            ),
+            other => app.focus == other,
+        }
+    };
     for (label, focus) in [
         (results_label, ListFocus::Results),
         (playlist_label, ListFocus::Playlist),
         (yt_label, ListFocus::YtPlaylist),
         (local_label, ListFocus::LocalFolder),
     ] {
-        if app.focus == focus {
+        if focus_matches(focus) {
             spans.push(Span::raw("[ "));
             spans.push(Span::styled(label, active));
             spans.push(Span::raw(" ]  "));
@@ -659,10 +897,13 @@ fn build_tab_title(app: &App) -> Line<'static> {
     }
 
     if app.config.show_shortcuts {
+        // Outer tab hints stay minimal for the Y/B section because each
+        // sub-pane (Library / Tracks) carries its own hints in its inner
+        // title.
         let context: &[(&str, &str)] = match app.focus {
             ListFocus::Results => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("y", "URL")],
             ListFocus::Playlist => &[("⇥", "switch"), ("-", "remove"), ("↵", "play"), ("y", "URL")],
-            ListFocus::YtPlaylist => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("p", "change URL")],
+            ListFocus::YtPlaylist | ListFocus::YtLibrary => &[("⇥", "switch"), ("p", "change URL")],
             ListFocus::LocalFolder => &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("o", "change folder")],
         };
         for (k, l) in context.iter() {

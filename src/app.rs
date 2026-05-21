@@ -3,6 +3,7 @@ use crate::captions::{self, Cue};
 use crate::clipboard;
 use crate::config::{self, Config, LoopMode};
 use crate::player::{Player, PlayerState};
+use crate::library::{self, PlaylistLibrary};
 use crate::local_scan;
 use crate::playlist::{self, Playlist};
 use crate::probe;
@@ -296,6 +297,22 @@ fn parse_search_filter(input: &str) -> (Vec<ytdlp::Platform>, String) {
     }
 }
 
+fn platform_short(p: ytdlp::Platform) -> &'static str {
+    match p {
+        ytdlp::Platform::YouTube => "YT",
+        ytdlp::Platform::Bilibili => "B",
+        ytdlp::Platform::Local => "local",
+    }
+}
+
+fn short_label(entry: &crate::library::PlaylistEntry) -> String {
+    if entry.title.len() > 60 {
+        format!("{}…", &entry.title[..60])
+    } else {
+        entry.title.clone()
+    }
+}
+
 fn rand_index_excluding(n: usize, except: usize) -> usize {
     if n <= 1 {
         return 0;
@@ -392,6 +409,7 @@ pub enum Mode {
 pub enum ListFocus {
     Results,
     Playlist,
+    YtLibrary,
     YtPlaylist,
     LocalFolder,
 }
@@ -410,7 +428,7 @@ pub enum SearchEvent {
 }
 
 pub enum YtPlaylistEvent {
-    Done(String, Result<Vec<Track>>),
+    Done(String, Result<ytdlp::PlaylistFetch>),
 }
 
 pub enum LocalFolderEvent {
@@ -483,6 +501,8 @@ pub struct App {
     pub duration_backfill_rx: Receiver<DurationBackfillEvent>,
     pending_searches: usize,
     current_search_query: Option<String>,
+    pub library: PlaylistLibrary,
+    pub library_selected: usize,
 }
 
 impl App {
@@ -493,6 +513,7 @@ impl App {
         playlist: Playlist,
         yt_playlist: Playlist,
         local_folder: Playlist,
+        library: PlaylistLibrary,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let (cap_tx, cap_rx) = mpsc::channel();
@@ -547,6 +568,8 @@ impl App {
             duration_backfill_rx: spawn_duration_backfill(&[]),
             pending_searches: 0,
             current_search_query: None,
+            library,
+            library_selected: 0,
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
@@ -579,6 +602,7 @@ impl App {
         match self.focus {
             ListFocus::Results => self.results.len(),
             ListFocus::Playlist => self.playlist.len(),
+            ListFocus::YtLibrary => self.library.entries.len(),
             ListFocus::YtPlaylist => self.yt_playlist.len(),
             ListFocus::LocalFolder => self.local_folder.len(),
         }
@@ -588,6 +612,7 @@ impl App {
         match self.focus {
             ListFocus::Results => self.selected,
             ListFocus::Playlist => self.playlist_selected,
+            ListFocus::YtLibrary => self.library_selected,
             ListFocus::YtPlaylist => self.yt_playlist_selected,
             ListFocus::LocalFolder => self.local_folder_selected,
         }
@@ -597,6 +622,7 @@ impl App {
         match self.focus {
             ListFocus::Results => &self.results,
             ListFocus::Playlist => &self.playlist,
+            ListFocus::YtLibrary => &[],
             ListFocus::YtPlaylist => &self.yt_playlist,
             ListFocus::LocalFolder => &self.local_folder,
         }
@@ -605,9 +631,20 @@ impl App {
     pub fn switch_focus(&mut self) {
         self.focus = match self.focus {
             ListFocus::Results => ListFocus::Playlist,
-            ListFocus::Playlist => ListFocus::YtPlaylist,
+            ListFocus::Playlist => ListFocus::YtLibrary,
+            ListFocus::YtLibrary => ListFocus::YtPlaylist,
             ListFocus::YtPlaylist => ListFocus::LocalFolder,
             ListFocus::LocalFolder => ListFocus::Results,
+        };
+    }
+
+    pub fn switch_focus_back(&mut self) {
+        self.focus = match self.focus {
+            ListFocus::Results => ListFocus::LocalFolder,
+            ListFocus::Playlist => ListFocus::Results,
+            ListFocus::YtLibrary => ListFocus::Playlist,
+            ListFocus::YtPlaylist => ListFocus::YtLibrary,
+            ListFocus::LocalFolder => ListFocus::YtPlaylist,
         };
     }
 
@@ -616,7 +653,7 @@ impl App {
             ListFocus::Results => self.results.get(self.selected).cloned(),
             ListFocus::YtPlaylist => self.yt_playlist.get(self.yt_playlist_selected).cloned(),
             ListFocus::LocalFolder => self.local_folder.get(self.local_folder_selected).cloned(),
-            ListFocus::Playlist => {
+            ListFocus::Playlist | ListFocus::YtLibrary => {
                 return;
             }
         };
@@ -924,18 +961,70 @@ impl App {
             return;
         }
         let url = normalize_path_input(&raw); // strips quotes / shell escapes
+        self.start_yt_playlist_fetch(url);
+    }
+
+    /// Kick off (or restart) the fetch for `url`, set it as the active
+    /// playlist, and pre-register a library entry so the user sees the
+    /// URL show up in the library list immediately.
+    fn start_yt_playlist_fetch(&mut self, url: String) {
+        let platform = ytdlp::platform_from_url(&url);
+        let provisional_title = url.clone();
+        self.library.upsert(&url, &provisional_title, platform, 0);
+        let _ = library::save(&self.library);
+        self.library_selected = self.library.position(&url).unwrap_or(0);
+
         self.config.yt_playlist_url = Some(url.clone());
         self.persist_config();
         self.yt_playlist_loading = true;
         self.focus = ListFocus::YtPlaylist;
         self.yt_playlist_selected = 0;
-        self.status = format!("Fetching YT playlist...");
+        self.status = format!("Fetching {} playlist...", platform_short(platform));
         let tx = self.yt_playlist_events_tx.clone();
         let url_clone = url.clone();
         thread::spawn(move || {
             let res = ytdlp::fetch_playlist(&url_clone);
             let _ = tx.send(YtPlaylistEvent::Done(url_clone, res));
         });
+    }
+
+    pub fn activate_library_entry(&mut self) {
+        let Some(entry) = self.library.entries.get(self.library_selected).cloned() else {
+            return;
+        };
+        self.start_yt_playlist_fetch(entry.url);
+    }
+
+    pub fn toggle_library_favorite(&mut self) {
+        if self.focus != ListFocus::YtLibrary {
+            return;
+        }
+        let url = self
+            .library
+            .entries
+            .get(self.library_selected)
+            .map(|e| e.url.clone());
+        self.library.toggle_favorite(self.library_selected);
+        let _ = library::save(&self.library);
+        if let Some(u) = url {
+            self.library_selected = self.library.position(&u).unwrap_or(0);
+        }
+    }
+
+    pub fn remove_library_entry(&mut self) {
+        if self.focus != ListFocus::YtLibrary {
+            return;
+        }
+        let idx = self.library_selected;
+        if let Some(removed) = self.library.remove(idx) {
+            let _ = library::save(&self.library);
+            if self.library_selected >= self.library.entries.len()
+                && self.library_selected > 0
+            {
+                self.library_selected -= 1;
+            }
+            self.status = format!("removed from library: {}", short_label(&removed));
+        }
     }
 
     pub fn cancel_open_file(&mut self) {
@@ -1122,11 +1211,18 @@ impl App {
             }
             self.yt_playlist_loading = false;
             match res {
-                Ok(tracks) => {
-                    self.yt_playlist = tracks;
+                Ok(fetched) => {
+                    self.yt_playlist = fetched.tracks;
                     self.yt_playlist_selected = 0;
                     self.persist_yt_playlist();
-                    self.status = format!("YT playlist loaded ({} tracks)", self.yt_playlist.len());
+                    // Refresh the library entry with the real title + count.
+                    let platform = ytdlp::platform_from_url(&url);
+                    let title = fetched.title.unwrap_or_else(|| url.clone());
+                    self.library.upsert(&url, &title, platform, self.yt_playlist.len());
+                    let _ = library::save(&self.library);
+                    self.library_selected = self.library.position(&url).unwrap_or(0);
+                    self.status =
+                        format!("{} playlist loaded ({} tracks)", platform_short(platform), self.yt_playlist.len());
                 }
                 Err(e) => {
                     self.status = format!("YT playlist failed: {}", e);
@@ -1247,12 +1343,19 @@ impl App {
         match self.focus {
             ListFocus::Results => self.selected = new as usize,
             ListFocus::Playlist => self.playlist_selected = new as usize,
+            ListFocus::YtLibrary => self.library_selected = new as usize,
             ListFocus::YtPlaylist => self.yt_playlist_selected = new as usize,
             ListFocus::LocalFolder => self.local_folder_selected = new as usize,
         }
     }
 
     pub fn play_selected(&mut self) {
+        // Library focus is a chooser, not a queue source — Enter on it
+        // activates the entry (fetch + switch) instead of starting playback.
+        if matches!(self.focus, ListFocus::YtLibrary) {
+            self.activate_library_entry();
+            return;
+        }
         let (source_tracks, source, sel_idx) = match self.focus {
             ListFocus::Results => (self.results.clone(), QueueSource::Results, self.selected),
             ListFocus::Playlist => (
@@ -1270,6 +1373,7 @@ impl App {
                 QueueSource::LocalFolder,
                 self.local_folder_selected,
             ),
+            ListFocus::YtLibrary => return, // handled above
         };
         let Some(track) = source_tracks.get(sel_idx).cloned() else {
             return;

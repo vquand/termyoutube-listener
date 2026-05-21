@@ -91,6 +91,18 @@ struct FlatEntry {
     channel: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    #[serde(default)]
+    playlist_title: Option<String>,
+    #[serde(default)]
+    playlist: Option<String>,
+}
+
+/// Bundle of playlist tracks plus the playlist's own title when yt-dlp
+/// reported one. Used by the YT/B Library so each saved entry shows a
+/// human-readable name rather than just its URL.
+pub struct PlaylistFetch {
+    pub title: Option<String>,
+    pub tracks: Vec<Track>,
 }
 
 /// Fetch every video from a public YouTube playlist URL (flat metadata
@@ -107,7 +119,7 @@ pub fn platform_from_url(url: &str) -> Platform {
     }
 }
 
-pub fn fetch_playlist(url: &str) -> Result<Vec<Track>> {
+pub fn fetch_playlist(url: &str) -> Result<PlaylistFetch> {
     let platform = platform_from_url(url);
     let output = Command::new("yt-dlp")
         .args([
@@ -123,10 +135,29 @@ pub fn fetch_playlist(url: &str) -> Result<Vec<Track>> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("yt-dlp failed: {}", stderr.trim());
     }
-    Ok(parse_track_jsonl(
-        &String::from_utf8_lossy(&output.stdout),
-        platform,
-    ))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let title = sniff_playlist_title(&stdout);
+    let tracks = parse_track_jsonl(&stdout, platform);
+    Ok(PlaylistFetch { title, tracks })
+}
+
+fn sniff_playlist_title(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let entry: FlatEntry = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(t) = entry.playlist_title.or(entry.playlist) {
+            if !t.trim().is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
 }
 
 fn parse_track_jsonl(stdout: &str, platform: Platform) -> Vec<Track> {

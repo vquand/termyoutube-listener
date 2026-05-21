@@ -3,6 +3,7 @@ mod audio;
 mod captions;
 mod clipboard;
 mod config;
+mod library;
 mod local_scan;
 mod player;
 mod playlist;
@@ -43,7 +44,8 @@ fn main() -> Result<()> {
     let pl = playlist::load();
     let yt_pl = playlist::load_yt();
     let local_pl = playlist::load_local();
-    let mut app = App::new(player, cfg, registry, pl, yt_pl, local_pl);
+    let library = library::load();
+    let mut app = App::new(player, cfg, registry, pl, yt_pl, local_pl, library);
 
     let mut terminal = setup_terminal()?;
     let res = run(&mut terminal, &mut app);
@@ -157,10 +159,28 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Char('y') => app.yank_selected_url(),
                 KeyCode::Char('p') => app.enter_yt_playlist_input(),
                 KeyCode::Char('`') => app.open_params(),
-                KeyCode::Tab => app.switch_focus(),
+                KeyCode::Tab => {
+                    if mods.contains(KeyModifiers::SHIFT) {
+                        app.switch_focus_back();
+                    } else {
+                        app.switch_focus();
+                    }
+                }
+                KeyCode::BackTab => app.switch_focus_back(),
                 KeyCode::Char('+') => app.add_focused_to_playlist(),
                 KeyCode::Char('-') | KeyCode::Backspace | KeyCode::Delete => {
-                    app.remove_focused_from_playlist()
+                    // d/Backspace/Del removes from whichever list owns
+                    // the verb: playlist entry or library entry.
+                    if matches!(app.focus, app::ListFocus::YtLibrary) {
+                        app.remove_library_entry();
+                    } else {
+                        app.remove_focused_from_playlist();
+                    }
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    if matches!(app.focus, app::ListFocus::YtLibrary) {
+                        app.remove_library_entry();
+                    }
                 }
                 KeyCode::Char('L') | KeyCode::Char('l') => app.cycle_loop(),
                 KeyCode::Char('H') | KeyCode::Char('h') => app.toggle_shuffle(),
@@ -171,8 +191,20 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 KeyCode::Enter => app.play_selected(),
                 KeyCode::Char('n') => app.next_track(),
                 KeyCode::Char('b') => app.prev_track(),
-                KeyCode::Char('f') => app.seek(10.0),
-                KeyCode::Char('F') => app.seek(60.0),
+                KeyCode::Char('f') => {
+                    if matches!(app.focus, app::ListFocus::YtLibrary) {
+                        app.toggle_library_favorite();
+                    } else {
+                        app.seek(10.0);
+                    }
+                }
+                KeyCode::Char('F') => {
+                    if matches!(app.focus, app::ListFocus::YtLibrary) {
+                        app.toggle_library_favorite();
+                    } else {
+                        app.seek(60.0);
+                    }
+                }
                 KeyCode::Char('r') => app.seek(-10.0),
                 KeyCode::Char('R') => app.seek(-60.0),
                 KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
