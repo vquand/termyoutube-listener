@@ -142,6 +142,15 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             KeyCode::Char(c) => app.query.push(c),
             _ => {}
         },
+        Mode::SavePlaylist => match code {
+            KeyCode::Esc => app.cancel_save_playlist(),
+            KeyCode::Enter => app.submit_save_playlist(),
+            KeyCode::Backspace => {
+                app.query.pop();
+            }
+            KeyCode::Char(c) => app.query.push(c),
+            _ => {}
+        },
         Mode::Browse => {
             if mods.contains(KeyModifiers::CONTROL) {
                 if let KeyCode::Char('c') = code {
@@ -184,6 +193,7 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
                 }
                 KeyCode::Char('L') | KeyCode::Char('l') => app.cycle_loop(),
                 KeyCode::Char('H') | KeyCode::Char('h') => app.toggle_shuffle(),
+                KeyCode::Char('S') => app.enter_save_playlist(),
                 KeyCode::Char('.') => app.toggle_shortcuts(),
                 KeyCode::Char('z') => app.volume_down(),
                 KeyCode::Char('x') => app.volume_up(),

@@ -1,4 +1,4 @@
-use crate::ytdlp::Platform;
+use crate::ytdlp::{Platform, Track};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -13,6 +13,31 @@ pub struct PlaylistEntry {
     pub favorite: bool,
     #[serde(default)]
     pub track_count: usize,
+    /// Inline track list for Local playlists; remote (YT / Bilibili)
+    /// entries leave this `None` and fetch on activate.
+    #[serde(default)]
+    pub tracks: Option<Vec<Track>>,
+    /// Sum of every track's duration in whole seconds. Cached at upsert /
+    /// insert time so the Saved Playlists row can show a total without
+    /// touching the network. `None` when no track in the playlist
+    /// reported a duration yet.
+    #[serde(default)]
+    pub total_duration: Option<u64>,
+}
+
+/// Sum the durations on a slice of tracks. Returns `None` when no track
+/// reported a duration (zero-sum vs. unknown collapses to None so the
+/// UI can render `--` rather than `0:00`).
+pub fn sum_durations(tracks: &[Track]) -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut any = false;
+    for t in tracks {
+        if let Some(d) = t.duration {
+            total = total.saturating_add(d);
+            any = true;
+        }
+    }
+    if any { Some(total) } else { None }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -51,10 +76,48 @@ impl PlaylistLibrary {
                 platform,
                 favorite: false,
                 track_count,
+                tracks: None,
+                total_duration: None,
             }),
         }
         self.sort();
         self.position(url).unwrap_or(0)
+    }
+
+    /// Insert a new local saved playlist (a snapshot of an Unsaved list).
+    /// Returns the row index of the new entry after the post-edit sort.
+    /// The synthetic URL `local:<title>:<count>` is just an internal key
+    /// so the upsert dedupe logic still works.
+    pub fn insert_local(&mut self, title: &str, tracks: Vec<Track>) -> usize {
+        let url = format!(
+            "local:{}:{}",
+            title,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        );
+        let count = tracks.len();
+        let total = sum_durations(&tracks);
+        self.entries.push(PlaylistEntry {
+            url: url.clone(),
+            title: title.to_string(),
+            platform: Platform::Local,
+            favorite: false,
+            track_count: count,
+            tracks: Some(tracks),
+            total_duration: total,
+        });
+        self.sort();
+        self.position(&url).unwrap_or(0)
+    }
+
+    /// Set the cached total duration on a row. Used by the remote-fetch
+    /// completion path that knows the tracks but doesn't own them.
+    pub fn set_total_duration(&mut self, idx: usize, total: Option<u64>) {
+        if let Some(e) = self.entries.get_mut(idx) {
+            e.total_duration = total;
+        }
     }
 
     pub fn toggle_favorite(&mut self, idx: usize) {

@@ -403,22 +403,35 @@ pub enum Mode {
     Nerd,
     OpenFile,
     YtPlaylistInput,
+    SavePlaylist,
 }
 
+/// The focus targets that the Tab key cycles through. YtLibrary is the
+/// Saved-Playlists sub-pane and YtPlaylist is the Tracks sub-pane of the
+/// unified Library tab. The old standalone Playlist tab is gone; its
+/// data now lives as the "Unsaved" virtual row inside YtLibrary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListFocus {
     Results,
-    Playlist,
     YtLibrary,
     YtPlaylist,
     LocalFolder,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which Library row is currently feeding the Tracks pane (and the
+/// playback queue when Enter is pressed). Unsaved means the live
+/// `playlist` working list; Saved(i) means `library.entries[i]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActiveLibrary {
+    Unsaved,
+    Saved(usize),
+}
+
+#[derive(Debug, Clone)]
 pub enum QueueSource {
     Results,
-    Playlist,
-    YtPlaylist,
+    Unsaved,
+    Saved { name: String },
     LocalFolder,
 }
 
@@ -483,7 +496,6 @@ pub struct App {
     pub params_row: usize,
     sprites: Registry,
     pub playlist: Vec<Track>,
-    pub playlist_selected: usize,
     pub focus: ListFocus,
     pub volume_popup_until: Option<Instant>,
     pub output_device: Option<OutputDevice>,
@@ -503,6 +515,8 @@ pub struct App {
     current_search_query: Option<String>,
     pub library: PlaylistLibrary,
     pub library_selected: usize,
+    pub active_library: ActiveLibrary,
+    pub last_saved_as: Option<String>,
 }
 
 impl App {
@@ -528,7 +542,7 @@ impl App {
             results: Vec::new(),
             selected: 0,
             queue: Vec::new(),
-            queue_source: QueueSource::Playlist,
+            queue_source: QueueSource::Unsaved,
             current: None,
             status: "Press `s` to search, `?` for help, `q` to quit.".into(),
             searching: false,
@@ -550,7 +564,6 @@ impl App {
             params_row: 0,
             sprites,
             playlist: playlist.tracks,
-            playlist_selected: 0,
             focus: ListFocus::Results,
             volume_popup_until: None,
             output_device: None,
@@ -570,9 +583,28 @@ impl App {
             current_search_query: None,
             library,
             library_selected: 0,
+            active_library: ActiveLibrary::Unsaved,
+            last_saved_as: None,
         };
         // Apply persisted volume to mpv at startup.
         let _ = app.player.set_volume(app.config.volume);
+        // Backfill cached library totals for any local entry whose JSON
+        // was written before total_duration existed.
+        let mut lib_changed = false;
+        for entry in app.library.entries.iter_mut() {
+            if entry.total_duration.is_none() {
+                if let Some(tracks) = &entry.tracks {
+                    let total = library::sum_durations(tracks);
+                    if total.is_some() {
+                        entry.total_duration = total;
+                        lib_changed = true;
+                    }
+                }
+            }
+        }
+        if lib_changed {
+            let _ = library::save(&app.library);
+        }
         // Backfill durations for any local tracks loaded from cache that
         // were saved before the probe step existed.
         app.duration_backfill_rx = app.spawn_duration_backfill();
@@ -601,9 +633,8 @@ impl App {
     pub fn focused_len(&self) -> usize {
         match self.focus {
             ListFocus::Results => self.results.len(),
-            ListFocus::Playlist => self.playlist.len(),
-            ListFocus::YtLibrary => self.library.entries.len(),
-            ListFocus::YtPlaylist => self.yt_playlist.len(),
+            ListFocus::YtLibrary => self.saved_playlist_row_count(),
+            ListFocus::YtPlaylist => self.active_tracks().len(),
             ListFocus::LocalFolder => self.local_folder.len(),
         }
     }
@@ -611,7 +642,6 @@ impl App {
     pub fn focused_selected(&self) -> usize {
         match self.focus {
             ListFocus::Results => self.selected,
-            ListFocus::Playlist => self.playlist_selected,
             ListFocus::YtLibrary => self.library_selected,
             ListFocus::YtPlaylist => self.yt_playlist_selected,
             ListFocus::LocalFolder => self.local_folder_selected,
@@ -621,17 +651,15 @@ impl App {
     pub fn focused_tracks(&self) -> &[Track] {
         match self.focus {
             ListFocus::Results => &self.results,
-            ListFocus::Playlist => &self.playlist,
             ListFocus::YtLibrary => &[],
-            ListFocus::YtPlaylist => &self.yt_playlist,
+            ListFocus::YtPlaylist => self.active_tracks(),
             ListFocus::LocalFolder => &self.local_folder,
         }
     }
 
     pub fn switch_focus(&mut self) {
         self.focus = match self.focus {
-            ListFocus::Results => ListFocus::Playlist,
-            ListFocus::Playlist => ListFocus::YtLibrary,
+            ListFocus::Results => ListFocus::YtLibrary,
             ListFocus::YtLibrary => ListFocus::YtPlaylist,
             ListFocus::YtPlaylist => ListFocus::LocalFolder,
             ListFocus::LocalFolder => ListFocus::Results,
@@ -641,19 +669,82 @@ impl App {
     pub fn switch_focus_back(&mut self) {
         self.focus = match self.focus {
             ListFocus::Results => ListFocus::LocalFolder,
-            ListFocus::Playlist => ListFocus::Results,
-            ListFocus::YtLibrary => ListFocus::Playlist,
+            ListFocus::YtLibrary => ListFocus::Results,
             ListFocus::YtPlaylist => ListFocus::YtLibrary,
             ListFocus::LocalFolder => ListFocus::YtPlaylist,
         };
     }
 
+    /// True when the live Unsaved row should be visible in the Saved
+    /// Playlists pane (it hides itself when empty so the user only ever
+    /// sees a fresh row once they actually have tracks queued).
+    pub fn unsaved_visible(&self) -> bool {
+        !self.playlist.is_empty()
+    }
+
+    /// Total row count of the Saved Playlists pane: library entries plus
+    /// the synthetic Unsaved row when non-empty.
+    pub fn saved_playlist_row_count(&self) -> usize {
+        self.library.entries.len() + if self.unsaved_visible() { 1 } else { 0 }
+    }
+
+    /// Map a row index in the Saved Playlists pane to either the live
+    /// Unsaved row or a saved library entry index.
+    pub fn saved_row_at(&self, idx: usize) -> Option<ActiveLibrary> {
+        if self.unsaved_visible() {
+            if idx == 0 {
+                return Some(ActiveLibrary::Unsaved);
+            }
+            self.library
+                .entries
+                .get(idx - 1)
+                .map(|_| ActiveLibrary::Saved(idx - 1))
+        } else {
+            self.library
+                .entries
+                .get(idx)
+                .map(|_| ActiveLibrary::Saved(idx))
+        }
+    }
+
+    /// The track list that feeds the Tracks pane (and play_selected when
+    /// focus = YtPlaylist). Routes by `active_library`.
+    pub fn active_tracks(&self) -> &[Track] {
+        match &self.active_library {
+            ActiveLibrary::Unsaved => &self.playlist,
+            ActiveLibrary::Saved(i) => {
+                let Some(entry) = self.library.entries.get(*i) else {
+                    return &[];
+                };
+                match &entry.tracks {
+                    Some(t) => t.as_slice(),
+                    None => &self.yt_playlist,
+                }
+            }
+        }
+    }
+
+    pub fn active_title(&self) -> String {
+        match &self.active_library {
+            ActiveLibrary::Unsaved => "Unsaved".to_string(),
+            ActiveLibrary::Saved(i) => self
+                .library
+                .entries
+                .get(*i)
+                .map(|e| e.title.clone())
+                .unwrap_or_else(|| "Saved Playlist".into()),
+        }
+    }
+
     pub fn add_focused_to_playlist(&mut self) {
         let track = match self.focus {
             ListFocus::Results => self.results.get(self.selected).cloned(),
-            ListFocus::YtPlaylist => self.yt_playlist.get(self.yt_playlist_selected).cloned(),
+            ListFocus::YtPlaylist => self
+                .active_tracks()
+                .get(self.yt_playlist_selected)
+                .cloned(),
             ListFocus::LocalFolder => self.local_folder.get(self.local_folder_selected).cloned(),
-            ListFocus::Playlist | ListFocus::YtLibrary => {
+            ListFocus::YtLibrary => {
                 return;
             }
         };
@@ -672,19 +763,23 @@ impl App {
     }
 
     pub fn remove_focused_from_playlist(&mut self) {
-        if self.focus != ListFocus::Playlist {
+        // - only operates on the live Unsaved row, viewed inside the
+        // Tracks pane. Saved entries are immutable snapshots.
+        if self.focus != ListFocus::YtPlaylist
+            || !matches!(self.active_library, ActiveLibrary::Unsaved)
+        {
             return;
         }
-        let removed_idx = self.playlist_selected;
+        let removed_idx = self.yt_playlist_selected;
         if removed_idx >= self.playlist.len() {
             return;
         }
         let removed = self.playlist.remove(removed_idx);
-        if self.playlist_selected >= self.playlist.len() && self.playlist_selected > 0 {
-            self.playlist_selected -= 1;
+        if self.yt_playlist_selected >= self.playlist.len() && self.yt_playlist_selected > 0 {
+            self.yt_playlist_selected -= 1;
         }
         self.persist_playlist();
-        self.status = format!("kicked — {}", removed.title);
+        self.status = format!("kicked - {}", removed.title);
     }
 
     fn persist_playlist(&mut self) {
@@ -926,7 +1021,7 @@ impl App {
     pub fn handle_paste(&mut self, text: &str) {
         if !matches!(
             self.mode,
-            Mode::Searching | Mode::OpenFile | Mode::YtPlaylistInput
+            Mode::Searching | Mode::OpenFile | Mode::YtPlaylistInput | Mode::SavePlaylist
         ) {
             return;
         }
@@ -945,6 +1040,84 @@ impl App {
             self.query = current;
         }
         self.status = "Paste a YouTube or Bilibili playlist URL and press Enter. Esc to cancel.".into();
+    }
+
+    pub fn enter_save_playlist(&mut self) {
+        if self.focus != ListFocus::YtLibrary {
+            return;
+        }
+        if self.playlist.is_empty() {
+            self.status = "nothing to save - Unsaved is empty".into();
+            return;
+        }
+        self.mode = Mode::SavePlaylist;
+        self.query.clear();
+        // Default name: the last save target (so re-pressing S on the
+        // same Unsaved overwrites it by default).
+        if let Some(name) = self.last_saved_as.clone() {
+            self.query = name;
+        }
+        self.status = "Save Unsaved as: type a name. Same name overwrites.".into();
+    }
+
+    pub fn cancel_save_playlist(&mut self) {
+        self.mode = Mode::Browse;
+        self.query.clear();
+        self.status.clear();
+    }
+
+    pub fn submit_save_playlist(&mut self) {
+        let name = self.query.trim().to_string();
+        self.mode = Mode::Browse;
+        self.query.clear();
+        if name.is_empty() {
+            self.status = "save cancelled - empty name".into();
+            return;
+        }
+        let tracks_snapshot = self.playlist.clone();
+        let count = tracks_snapshot.len();
+
+        // Look for an existing local entry with the same display name and
+        // overwrite in place; otherwise create a new one.
+        let existing = self
+            .library
+            .entries
+            .iter()
+            .position(|e| e.title == name && matches!(e.platform, ytdlp::Platform::Local));
+        let saved_idx = if let Some(i) = existing {
+            let total = library::sum_durations(&tracks_snapshot);
+            self.library.entries[i].tracks = Some(tracks_snapshot);
+            self.library.entries[i].track_count = count;
+            self.library.entries[i].total_duration = total;
+            i
+        } else {
+            self.library.insert_local(&name, tracks_snapshot)
+        };
+        let _ = library::save(&self.library);
+        self.last_saved_as = Some(name.clone());
+        self.active_library = ActiveLibrary::Saved(saved_idx);
+        self.yt_playlist_selected = 0;
+
+        // Per spec: after save, Unsaved is no longer Unsaved - clear it.
+        self.playlist.clear();
+        self.persist_playlist();
+
+        // Snap the Saved Playlists cursor onto the new entry. Library
+        // sort may have moved it; recompute its row.
+        if let Some(i) = self
+            .library
+            .entries
+            .iter()
+            .position(|e| matches!(e.platform, ytdlp::Platform::Local) && e.title == name)
+        {
+            self.active_library = ActiveLibrary::Saved(i);
+            self.library_selected = i + if self.unsaved_visible() { 1 } else { 0 };
+        }
+        if existing.is_some() {
+            self.status = format!("overwritten: {} ({} tracks)", name, count);
+        } else {
+            self.status = format!("saved: {} ({} tracks)", name, count);
+        }
     }
 
     pub fn cancel_yt_playlist_input(&mut self) {
@@ -989,25 +1162,53 @@ impl App {
     }
 
     pub fn activate_library_entry(&mut self) {
-        let Some(entry) = self.library.entries.get(self.library_selected).cloned() else {
-            return;
-        };
-        self.start_yt_playlist_fetch(entry.url);
+        let row = self.library_selected;
+        match self.saved_row_at(row) {
+            Some(ActiveLibrary::Unsaved) => {
+                self.active_library = ActiveLibrary::Unsaved;
+                self.yt_playlist_selected = 0;
+                self.status = "Active: Unsaved".to_string();
+            }
+            Some(ActiveLibrary::Saved(i)) => {
+                let entry = self.library.entries[i].clone();
+                if entry.tracks.is_some() {
+                    // Local saved playlist - no fetch needed; tracks live
+                    // inline on the entry.
+                    self.active_library = ActiveLibrary::Saved(i);
+                    self.yt_playlist_selected = 0;
+                    self.status = format!("Active: {} (local)", entry.title);
+                } else {
+                    // Remote (YT / Bilibili) - kick off a refetch.
+                    self.active_library = ActiveLibrary::Saved(i);
+                    self.start_yt_playlist_fetch(entry.url);
+                }
+            }
+            None => {}
+        }
     }
 
     pub fn toggle_library_favorite(&mut self) {
         if self.focus != ListFocus::YtLibrary {
             return;
         }
+        // Map the selected row to a saved entry. The Unsaved row has no
+        // favorite state.
+        let saved_idx = match self.saved_row_at(self.library_selected) {
+            Some(ActiveLibrary::Saved(i)) => i,
+            _ => return,
+        };
         let url = self
             .library
             .entries
-            .get(self.library_selected)
+            .get(saved_idx)
             .map(|e| e.url.clone());
-        self.library.toggle_favorite(self.library_selected);
+        self.library.toggle_favorite(saved_idx);
         let _ = library::save(&self.library);
         if let Some(u) = url {
-            self.library_selected = self.library.position(&u).unwrap_or(0);
+            if let Some(new_idx) = self.library.position(&u) {
+                // Saved entries sit below Unsaved when it is visible.
+                self.library_selected = new_idx + if self.unsaved_visible() { 1 } else { 0 };
+            }
         }
     }
 
@@ -1015,13 +1216,26 @@ impl App {
         if self.focus != ListFocus::YtLibrary {
             return;
         }
-        let idx = self.library_selected;
-        if let Some(removed) = self.library.remove(idx) {
+        // Unsaved row is not removable.
+        let saved_idx = match self.saved_row_at(self.library_selected) {
+            Some(ActiveLibrary::Saved(i)) => i,
+            _ => return,
+        };
+        if let Some(removed) = self.library.remove(saved_idx) {
             let _ = library::save(&self.library);
-            if self.library_selected >= self.library.entries.len()
-                && self.library_selected > 0
-            {
-                self.library_selected -= 1;
+            // If we removed the active entry, fall back to Unsaved.
+            if matches!(&self.active_library, ActiveLibrary::Saved(i) if *i == saved_idx) {
+                self.active_library = ActiveLibrary::Unsaved;
+            }
+            // Renumber active if a lower-indexed entry was deleted.
+            if let ActiveLibrary::Saved(i) = &mut self.active_library {
+                if *i > saved_idx {
+                    *i -= 1;
+                }
+            }
+            let total = self.saved_playlist_row_count();
+            if self.library_selected >= total && total > 0 {
+                self.library_selected = total - 1;
             }
             self.status = format!("removed from library: {}", short_label(&removed));
         }
@@ -1095,8 +1309,14 @@ impl App {
                 self.playlist.len() - 1
             }
         };
-        self.focus = ListFocus::Playlist;
-        self.playlist_selected = idx;
+        // Land the user in the Tracks pane viewing Unsaved with the new
+        // file selected. play_at handles starting playback against the
+        // captured queue.
+        self.focus = ListFocus::YtPlaylist;
+        self.active_library = ActiveLibrary::Unsaved;
+        self.yt_playlist_selected = idx;
+        self.queue = self.playlist.clone();
+        self.queue_source = QueueSource::Unsaved;
         self.play_at(idx);
     }
 
@@ -1215,10 +1435,17 @@ impl App {
                     self.yt_playlist = fetched.tracks;
                     self.yt_playlist_selected = 0;
                     self.persist_yt_playlist();
-                    // Refresh the library entry with the real title + count.
+                    // Refresh the library entry with the real title +
+                    // count + cached total duration so the row in the
+                    // Saved Playlists pane shows length without a
+                    // re-fetch.
                     let platform = ytdlp::platform_from_url(&url);
                     let title = fetched.title.unwrap_or_else(|| url.clone());
-                    self.library.upsert(&url, &title, platform, self.yt_playlist.len());
+                    let idx = self
+                        .library
+                        .upsert(&url, &title, platform, self.yt_playlist.len());
+                    let total = library::sum_durations(&self.yt_playlist);
+                    self.library.set_total_duration(idx, total);
                     let _ = library::save(&self.library);
                     self.library_selected = self.library.position(&url).unwrap_or(0);
                     self.status =
@@ -1245,6 +1472,7 @@ impl App {
             let DurationBackfillEvent::Done(updates) = ev;
             let mut changed_playlist = false;
             let mut changed_local = false;
+            let mut changed_library = false;
             for (id, dur) in updates {
                 for t in self.playlist.iter_mut() {
                     if t.id == id && t.duration.is_none() {
@@ -1263,12 +1491,34 @@ impl App {
                         t.duration = Some(dur);
                     }
                 }
+                // Local saved playlists store tracks inline; backfill
+                // their durations too so the cached totals get refreshed
+                // below.
+                for entry in self.library.entries.iter_mut() {
+                    if let Some(tracks) = entry.tracks.as_mut() {
+                        for t in tracks.iter_mut() {
+                            if t.id == id && t.duration.is_none() {
+                                t.duration = Some(dur);
+                                changed_library = true;
+                            }
+                        }
+                    }
+                }
             }
             if changed_playlist {
                 self.persist_playlist();
             }
             if changed_local {
                 self.persist_local_folder();
+            }
+            if changed_library {
+                // Recompute cached totals for affected entries.
+                for entry in self.library.entries.iter_mut() {
+                    if let Some(tracks) = &entry.tracks {
+                        entry.total_duration = library::sum_durations(tracks);
+                    }
+                }
+                let _ = library::save(&self.library);
             }
         }
         while let Ok(ev) = self.caption_events_rx.try_recv() {
@@ -1342,7 +1592,6 @@ impl App {
         }
         match self.focus {
             ListFocus::Results => self.selected = new as usize,
-            ListFocus::Playlist => self.playlist_selected = new as usize,
             ListFocus::YtLibrary => self.library_selected = new as usize,
             ListFocus::YtPlaylist => self.yt_playlist_selected = new as usize,
             ListFocus::LocalFolder => self.local_folder_selected = new as usize,
@@ -1350,28 +1599,41 @@ impl App {
     }
 
     pub fn play_selected(&mut self) {
-        // Library focus is a chooser, not a queue source — Enter on it
-        // activates the entry (fetch + switch) instead of starting playback.
+        // Saved-Playlists pane is a chooser; Enter activates the row.
         if matches!(self.focus, ListFocus::YtLibrary) {
             self.activate_library_entry();
             return;
         }
-        let (source_tracks, source, sel_idx) = match self.focus {
-            ListFocus::Results => (self.results.clone(), QueueSource::Results, self.selected),
-            ListFocus::Playlist => (
-                self.playlist.clone(),
-                QueueSource::Playlist,
-                self.playlist_selected,
+        let (source_tracks, source, sel_idx, mirror) = match self.focus {
+            ListFocus::Results => (
+                self.results.clone(),
+                QueueSource::Results,
+                self.selected,
+                true,
             ),
-            ListFocus::YtPlaylist => (
-                self.yt_playlist.clone(),
-                QueueSource::YtPlaylist,
-                self.yt_playlist_selected,
-            ),
+            ListFocus::YtPlaylist => {
+                let tracks = self.active_tracks().to_vec();
+                let src = match &self.active_library {
+                    ActiveLibrary::Unsaved => QueueSource::Unsaved,
+                    ActiveLibrary::Saved(i) => QueueSource::Saved {
+                        name: self
+                            .library
+                            .entries
+                            .get(*i)
+                            .map(|e| e.title.clone())
+                            .unwrap_or_else(|| "Saved Playlist".into()),
+                    },
+                };
+                // Tracks pane viewing Unsaved already IS the Unsaved list,
+                // so no mirror copy is needed for that case.
+                let mirror = !matches!(self.active_library, ActiveLibrary::Unsaved);
+                (tracks, src, self.yt_playlist_selected, mirror)
+            }
             ListFocus::LocalFolder => (
                 self.local_folder.clone(),
                 QueueSource::LocalFolder,
                 self.local_folder_selected,
+                true,
             ),
             ListFocus::YtLibrary => return, // handled above
         };
@@ -1381,11 +1643,9 @@ impl App {
         self.queue = source_tracks;
         self.queue_source = source;
 
-        // Mirror the selected track into the local Playlist for memory /
-        // visibility unless we are already playing from Playlist itself.
-        let was_new = if source != QueueSource::Playlist
-            && !self.playlist.iter().any(|t| t.id == track.id)
-        {
+        // Mirror the selected track into the live Unsaved list for memory
+        // / visibility unless we are already playing from Unsaved itself.
+        let was_new = if mirror && !self.playlist.iter().any(|t| t.id == track.id) {
             self.playlist.push(track);
             self.persist_playlist();
             true
