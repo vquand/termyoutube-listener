@@ -68,3 +68,63 @@ See `Player::spawn` in `src/player.rs`.
 - TUI tick is 200 ms (`main.rs::run`). Keep per-tick work cheap.
 - Release profile is tuned for size (`opt-level="z"`, `lto=true`, `strip=true`,
   `panic="abort"`). Don't switch to `opt-level=3` without a measured reason.
+
+## Merge process
+
+After the user confirms a feature works on a `feat-*` branch, deliver it to
+`main` with the steps below. The branch name should already be in place from
+the start of the work — don't rename it.
+
+1. **Sanity-check the working tree.**
+
+   ```sh
+   git status
+   git diff --stat HEAD
+   grep -rn "/Users/\|/home/" --include='*.rs' --include='*.toml' \
+        --include='*.json' --include='*.md' . | grep -v target | grep -v .git \
+        || echo "no absolute paths"
+   ```
+
+   Refuse to commit if any tracked file leaks an absolute home directory.
+
+2. **Stage by name, not wildcards.** `git add file1 file2 …`. Never
+   `git add .` or `git add -A` — keeps stray downloads, `tmp/`, `.claude/`,
+   etc. out of commits.
+
+3. **Commit with plain prose.** Use a HEREDOC so newlines survive:
+
+   ```sh
+   git commit -m "$(cat <<'EOF'
+   Short imperative subject under ~70 chars
+
+   Multi-paragraph body explaining what changed and why. Wrap around 72.
+   EOF
+   )"
+   ```
+
+   Hard rules for the message:
+
+   - **No co-author trailer.** Don't add `Co-Authored-By:` lines.
+   - **No emoji.**
+   - **No em-dashes or en-dashes** in the commit message (they read as AI
+     filler). ASCII dashes only. Code, comments, and user-facing UI strings
+     may still use them where they read naturally.
+   - **No "Generated with" footer.**
+
+4. **Fast-forward into main.** From the feature branch, run:
+
+   ```sh
+   git checkout main
+   git pull origin main
+   git merge --ff-only <feat-branch>
+   git push origin main
+   git branch -d <feat-branch>
+   ```
+
+   `--ff-only` is intentional — no merge commits clutter the history.
+
+5. **Confirm cleanup.** End with `git branch -a` so the user can see that
+   the feature branch is gone and `main` matches `origin/main`.
+
+Don't push the feature branch to `origin` — the fast-forward preserves every
+commit in `main`, and a stray remote branch is just litter to delete later.
