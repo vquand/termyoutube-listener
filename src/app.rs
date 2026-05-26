@@ -1,10 +1,10 @@
 use crate::audio::{self, OutputDevice};
-use crate::captions::{self, Cue};
+use crate::captions::{self, CaptionTrack};
 use crate::clipboard;
 use crate::config::{self, Config, LoopMode};
-use crate::player::{Player, PlayerState};
 use crate::library::{self, PlaylistLibrary};
 use crate::local_scan;
+use crate::player::{Player, PlayerState};
 use crate::playlist::{self, Playlist};
 use crate::probe;
 use crate::sprites::{Registry, Sprite};
@@ -95,7 +95,22 @@ fn unescape_shell(s: &str) -> String {
             if let Some(&next) = chars.peek() {
                 if matches!(
                     next,
-                    ' ' | '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\\' | '&' | ';' | '`' | '$' | '!' | '*' | '?'
+                    ' ' | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '\''
+                        | '"'
+                        | '\\'
+                        | '&'
+                        | ';'
+                        | '`'
+                        | '$'
+                        | '!'
+                        | '*'
+                        | '?'
                 ) {
                     out.push(next);
                     chars.next();
@@ -134,12 +149,18 @@ mod path_input_tests {
 
     #[test]
     fn strips_double_quotes() {
-        assert_eq!(normalize_path_input("\"/foo/bar baz.webm\""), "/foo/bar baz.webm");
+        assert_eq!(
+            normalize_path_input("\"/foo/bar baz.webm\""),
+            "/foo/bar baz.webm"
+        );
     }
 
     #[test]
     fn strips_single_quotes() {
-        assert_eq!(normalize_path_input("'/foo/bar baz.webm'"), "/foo/bar baz.webm");
+        assert_eq!(
+            normalize_path_input("'/foo/bar baz.webm'"),
+            "/foo/bar baz.webm"
+        );
     }
 
     #[test]
@@ -233,7 +254,10 @@ fn write_open_debug_log(
     let path = std::env::temp_dir().join("ytmtui-open-debug.log");
     let mut report = String::new();
     report.push_str("ytmtui open-file failure debug\n\n");
-    report.push_str(&format!("raw input chars: {} U+codepoints\n", raw.chars().count()));
+    report.push_str(&format!(
+        "raw input chars: {} U+codepoints\n",
+        raw.chars().count()
+    ));
     report.push_str(&format!("  text: {raw:?}\n"));
     report.push_str("  codepoints:");
     for c in raw.chars() {
@@ -328,9 +352,7 @@ fn rand_index_excluding(n: usize, except: usize) -> usize {
 /// `(track_id, source_path)` pair and emits a single batched event when
 /// done. If `targets` is empty the channel is closed immediately so the
 /// drain loop just sees no events.
-fn spawn_duration_backfill(
-    targets: &[(String, String)],
-) -> Receiver<DurationBackfillEvent> {
+fn spawn_duration_backfill(targets: &[(String, String)]) -> Receiver<DurationBackfillEvent> {
     let (tx, rx) = mpsc::channel();
     if targets.is_empty() {
         drop(tx);
@@ -435,7 +457,6 @@ pub enum QueueSource {
     LocalFolder,
 }
 
-
 pub enum SearchEvent {
     Done(String, Result<Vec<Track>>),
 }
@@ -456,7 +477,7 @@ pub enum DurationBackfillEvent {
 }
 
 pub enum CaptionEvent {
-    Done(String, Result<Vec<Cue>>),
+    Done(String, Result<Vec<CaptionTrack>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -488,7 +509,7 @@ pub struct App {
     pub ytdlp_version: Option<String>,
     pub show_captions: bool,
     pub caption_status: CaptionStatus,
-    pub captions: Vec<Cue>,
+    pub captions: Vec<CaptionTrack>,
     captions_track_id: Option<String>,
     pub caption_events_rx: Receiver<CaptionEvent>,
     caption_events_tx: Sender<CaptionEvent>,
@@ -739,10 +760,7 @@ impl App {
     pub fn add_focused_to_playlist(&mut self) {
         let track = match self.focus {
             ListFocus::Results => self.results.get(self.selected).cloned(),
-            ListFocus::YtPlaylist => self
-                .active_tracks()
-                .get(self.yt_playlist_selected)
-                .cloned(),
+            ListFocus::YtPlaylist => self.active_tracks().get(self.yt_playlist_selected).cloned(),
             ListFocus::LocalFolder => self.local_folder.get(self.local_folder_selected).cloned(),
             ListFocus::YtLibrary => {
                 return;
@@ -783,21 +801,27 @@ impl App {
     }
 
     fn persist_playlist(&mut self) {
-        let pl = Playlist { tracks: self.playlist.clone() };
+        let pl = Playlist {
+            tracks: self.playlist.clone(),
+        };
         if let Err(e) = playlist::save(&pl) {
             self.status = format!("playlist saved (write failed: {})", e);
         }
     }
 
     fn persist_yt_playlist(&mut self) {
-        let pl = Playlist { tracks: self.yt_playlist.clone() };
+        let pl = Playlist {
+            tracks: self.yt_playlist.clone(),
+        };
         if let Err(e) = playlist::save_yt(&pl) {
             self.status = format!("yt playlist saved (write failed: {})", e);
         }
     }
 
     fn persist_local_folder(&mut self) {
-        let pl = Playlist { tracks: self.local_folder.clone() };
+        let pl = Playlist {
+            tracks: self.local_folder.clone(),
+        };
         if let Err(e) = playlist::save_local(&pl) {
             self.status = format!("local folder saved (write failed: {})", e);
         }
@@ -939,10 +963,16 @@ impl App {
             (cur + 1) % langs.len()
         };
         self.config.caption_lang = langs[next].to_string();
+        self.config.caption_langs = vec![self.config.caption_lang.clone()];
         if let Err(e) = config::save(&self.config) {
             self.status = format!("Saved CC lang (config write failed: {})", e);
         } else {
             self.status = format!("CC language: {}", self.config.caption_lang);
+        }
+        if self.show_captions {
+            if let Some(track) = self.current_track().cloned() {
+                self.spawn_caption_fetch(&track.id);
+            }
         }
     }
 
@@ -959,7 +989,10 @@ impl App {
             // Lazy fetch: if we have a current track but never loaded captions for it.
             if let Some(track) = self.current_track().cloned() {
                 if self.captions_track_id.as_deref() != Some(&track.id)
-                    || matches!(self.caption_status, CaptionStatus::Idle | CaptionStatus::Error)
+                    || matches!(
+                        self.caption_status,
+                        CaptionStatus::Idle | CaptionStatus::Error
+                    )
                 {
                     self.spawn_caption_fetch(&track.id);
                 }
@@ -973,19 +1006,27 @@ impl App {
         self.captions_track_id = Some(track_id.to_string());
         let tx = self.caption_events_tx.clone();
         let id = track_id.to_string();
-        let lang = self.config.caption_lang.clone();
+        let langs = self.config.preferred_caption_langs();
+        let options = captions::FetchOptions {
+            cookies_from_browser: self.config.ytdlp_cookies_from_browser.clone(),
+            cookies: self.config.ytdlp_cookies.clone(),
+        };
         thread::spawn(move || {
-            let res = captions::fetch(&id, &lang);
+            let res = captions::fetch(&id, &langs, &options);
             let _ = tx.send(CaptionEvent::Done(id, res));
         });
     }
 
-    pub fn current_caption(&self) -> Option<&str> {
+    pub fn current_captions(&self) -> Vec<&str> {
         if !self.show_captions {
-            return None;
+            return Vec::new();
         }
         let pos = self.player.state().position;
-        captions::active_cue(&self.captions, pos)
+        self.captions
+            .iter()
+            .filter_map(|track| captions::active_cue(&track.cues, pos))
+            .take(2)
+            .collect()
     }
 
     pub fn refresh_stats(&mut self) {
@@ -1039,7 +1080,8 @@ impl App {
         if let Some(current) = self.config.yt_playlist_url.clone() {
             self.query = current;
         }
-        self.status = "Paste a YouTube or Bilibili playlist URL and press Enter. Esc to cancel.".into();
+        self.status =
+            "Paste a YouTube or Bilibili playlist URL and press Enter. Esc to cancel.".into();
     }
 
     pub fn enter_save_playlist(&mut self) {
@@ -1197,11 +1239,7 @@ impl App {
             Some(ActiveLibrary::Saved(i)) => i,
             _ => return,
         };
-        let url = self
-            .library
-            .entries
-            .get(saved_idx)
-            .map(|e| e.url.clone());
+        let url = self.library.entries.get(saved_idx).map(|e| e.url.clone());
         self.library.toggle_favorite(saved_idx);
         let _ = library::save(&self.library);
         if let Some(u) = url {
@@ -1382,11 +1420,7 @@ impl App {
 
         if self.pending_searches == 0 {
             self.searching = false;
-            self.status = format!(
-                "Local results: {} for \"{}\".",
-                self.results.len(),
-                query
-            );
+            self.status = format!("Local results: {} for \"{}\".", self.results.len(), query);
         }
     }
 
@@ -1411,11 +1445,8 @@ impl App {
                     }
                     if self.pending_searches == 0 {
                         self.searching = false;
-                        self.status = format!(
-                            "Found {} results for \"{}\".",
-                            self.results.len(),
-                            q
-                        );
+                        self.status =
+                            format!("Found {} results for \"{}\".", self.results.len(), q);
                     }
                 }
             }
@@ -1448,8 +1479,11 @@ impl App {
                     self.library.set_total_duration(idx, total);
                     let _ = library::save(&self.library);
                     self.library_selected = self.library.position(&url).unwrap_or(0);
-                    self.status =
-                        format!("{} playlist loaded ({} tracks)", platform_short(platform), self.yt_playlist.len());
+                    self.status = format!(
+                        "{} playlist loaded ({} tracks)",
+                        platform_short(platform),
+                        self.yt_playlist.len()
+                    );
                 }
                 Err(e) => {
                     self.status = format!("YT playlist failed: {}", e);

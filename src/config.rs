@@ -41,6 +41,9 @@ pub struct Config {
     pub local_folder: Option<String>,
     pub local_folder_label: Option<String>,
     pub caption_lang: String,
+    pub caption_langs: Vec<String>,
+    pub ytdlp_cookies_from_browser: Option<String>,
+    pub ytdlp_cookies: Option<String>,
 }
 
 impl Default for Config {
@@ -55,6 +58,9 @@ impl Default for Config {
             local_folder: None,
             local_folder_label: None,
             caption_lang: "en".into(),
+            caption_langs: vec!["en".into()],
+            ytdlp_cookies_from_browser: None,
+            ytdlp_cookies: None,
         }
     }
 }
@@ -64,6 +70,22 @@ impl Default for Config {
 pub const CAPTION_LANGS: &[&str] = &[
     "en", "vi", "fr", "de", "es", "it", "pt", "ja", "ko", "zh", "ru",
 ];
+
+impl Config {
+    pub fn preferred_caption_langs(&self) -> Vec<String> {
+        let mut langs: Vec<String> = self
+            .caption_langs
+            .iter()
+            .map(|lang| lang.trim())
+            .filter(|lang| !lang.is_empty())
+            .map(str::to_string)
+            .collect();
+        if langs.is_empty() {
+            langs.push(self.caption_lang.clone());
+        }
+        langs
+    }
+}
 
 pub fn path() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {

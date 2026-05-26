@@ -20,7 +20,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Constraint::Length(4), // now playing
     ];
     if app.show_captions {
-        constraints.push(Constraint::Length(3)); // captions strip
+        constraints.push(Constraint::Length(4)); // captions strip
     }
     constraints.push(Constraint::Length(1)); // status
     let chunks = Layout::default()
@@ -62,7 +62,12 @@ fn draw_volume_overlay(f: &mut Frame, app: &App, area: Rect) {
     }
     let x = (area.width.saturating_sub(w)) / 2;
     let y = area.height.saturating_sub(h + 4); // sit a few rows above the bottom
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let v = app.config.volume;
     let bar_cells: usize = 20;
@@ -74,10 +79,25 @@ fn draw_volume_overlay(f: &mut Frame, app: &App, area: Rect) {
 
     let line = Line::from(vec![
         Span::raw(" "),
-        Span::styled(bar_filled, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            bar_filled,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(bar_empty, Style::default().fg(Color::DarkGray)),
-        Span::styled(pct, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled(face, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            pct,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            face,
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
 
     let block = Block::default()
@@ -103,7 +123,9 @@ fn volume_face(v: u8) -> &'static str {
 }
 
 fn key_style() -> Style {
-    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn label_style() -> Style {
@@ -126,7 +148,9 @@ fn draw_shortcuts(f: &mut Frame, app: &App, area: Rect) {
         let line = Line::from(vec![
             Span::styled(
                 " .",
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" show shortcuts", label_style()),
         ]);
@@ -166,10 +190,7 @@ fn draw_captions(f: &mut Frame, app: &App, area: Rect) {
             "(yt-dlp failed to fetch captions)".to_string(),
             Color::Red,
         ),
-        CaptionStatus::Ready => {
-            let line = app.current_caption().unwrap_or("").to_string();
-            (" CC [c] ", line, Color::White)
-        }
+        CaptionStatus::Ready => (" CC [c] ", app.current_captions().join("\n"), Color::White),
     };
     let block = Block::default().borders(Borders::ALL).title(label);
     let p = Paragraph::new(text)
@@ -204,7 +225,12 @@ fn draw_nerd_overlay(f: &mut Frame, app: &App, area: Rect) {
     let h = 17.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let s = app.stats();
     let st = app.player_state();
@@ -242,17 +268,11 @@ fn draw_nerd_overlay(f: &mut Frame, app: &App, area: Rect) {
         ),
         row(
             "mpv",
-            Span::styled(
-                app.mpv_version.clone().unwrap_or_else(|| "—".into()),
-                val,
-            ),
+            Span::styled(app.mpv_version.clone().unwrap_or_else(|| "—".into()), val),
         ),
         row(
             "yt-dlp",
-            Span::styled(
-                app.ytdlp_version.clone().unwrap_or_else(|| "—".into()),
-                val,
-            ),
+            Span::styled(app.ytdlp_version.clone().unwrap_or_else(|| "—".into()), val),
         ),
         Line::from(""),
         row(
@@ -276,7 +296,9 @@ fn draw_nerd_overlay(f: &mut Frame, app: &App, area: Rect) {
                     fmt_bytes(s.self_proc.rss_bytes),
                     fmt_bytes(s.mpv.rss_bytes),
                 ),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
         ),
         Line::from(""),
@@ -368,7 +390,8 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
             (
                 Line::from(spans),
                 if app.query.is_empty() {
-                    "Press `s` to search, `o` to open file, `p` to load a YT playlist...".to_string()
+                    "Press `s` to search, `o` to open file, `p` to load a YT playlist..."
+                        .to_string()
                 } else {
                     app.query.clone()
                 },
@@ -411,7 +434,9 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw(format!("{:>5}  ", dur)),
                 Span::styled(
                     t.source_glyph().to_string(),
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
             ];
@@ -439,7 +464,9 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
 
     let items = if items.is_empty() {
         let hint = match app.focus {
-            ListFocus::Results => "Press `s` to search YouTube, `o` to open a local file or folder...",
+            ListFocus::Results => {
+                "Press `s` to search YouTube, `o` to open a local file or folder..."
+            }
             ListFocus::LocalFolder => {
                 if app.local_folder_scanning {
                     "scanning..."
@@ -624,7 +651,11 @@ fn draw_library_pane(f: &mut Frame, app: &App, area: Rect, focused: bool) {
         .block(block)
         .highlight_style(
             Style::default()
-                .bg(if focused { Color::Blue } else { Color::DarkGray })
+                .bg(if focused {
+                    Color::Blue
+                } else {
+                    Color::DarkGray
+                })
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )
@@ -703,7 +734,11 @@ fn draw_yt_tracks_pane(f: &mut Frame, app: &App, area: Rect, focused: bool) {
     } else {
         format!("Tracks · {} ({})", active_name, tracks.len())
     };
-    let mut title_spans = vec![Span::raw(" "), Span::styled(label, title_style), Span::raw(" ")];
+    let mut title_spans = vec![
+        Span::raw(" "),
+        Span::styled(label, title_style),
+        Span::raw(" "),
+    ];
     if app.config.show_shortcuts {
         for (k, l) in [("⇥", "switch"), ("+", "add"), ("↵", "play"), ("y", "URL")] {
             title_spans.push(shortcut_sep());
@@ -719,7 +754,11 @@ fn draw_yt_tracks_pane(f: &mut Frame, app: &App, area: Rect, focused: bool) {
         .block(block)
         .highlight_style(
             Style::default()
-                .bg(if focused { Color::Blue } else { Color::DarkGray })
+                .bg(if focused {
+                    Color::Blue
+                } else {
+                    Color::DarkGray
+                })
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )
@@ -759,7 +798,9 @@ fn total_duration_for_focus(app: &App, tracks: &[crate::ytdlp::Track]) -> Option
         Span::styled(" total ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             body,
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ]))
@@ -774,10 +815,8 @@ fn build_device_title(app: &App) -> Line<'static> {
         None => (DeviceKind::Unknown, false),
     };
     let vol_block = audio::volume_block(app.config.volume);
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::raw(" "),
-        Span::styled(kind.kaomoji().to_string(), on),
-    ];
+    let mut spans: Vec<Span<'static>> =
+        vec![Span::raw(" "), Span::styled(kind.kaomoji().to_string(), on)];
     if bt {
         spans.push(Span::raw(" "));
         spans.push(Span::styled("ᛒ", on));
@@ -794,26 +833,21 @@ fn queue_source_label(app: &App) -> String {
         QueueSource::Unsaved => "Unsaved".to_string(),
         QueueSource::Saved { name } => name.clone(),
         QueueSource::LocalFolder => {
-            let name = app
-                .config
-                .local_folder_label
-                .as_deref()
-                .unwrap_or("folder");
+            let name = app.config.local_folder_label.as_deref().unwrap_or("folder");
             format!("⌂: {}", name)
         }
     }
 }
 
 fn build_now_playing_title(app: &App) -> Line<'static> {
-    let on = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let on = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let dim = label_style();
     let mut spans = vec![Span::raw(" Now Playing ")];
     if app.current_track().is_some() {
         spans.push(Span::styled("· from: ", dim));
-        spans.push(Span::styled(
-            format!("{} ", queue_source_label(app)),
-            on,
-        ));
+        spans.push(Span::styled(format!("{} ", queue_source_label(app)), on));
     }
     if !app.config.show_shortcuts {
         // Still surface state indicators when shortcuts are hidden.
@@ -836,7 +870,11 @@ fn build_now_playing_title(app: &App) -> Line<'static> {
         LoopMode::Off => label_style(),
         _ => on,
     };
-    let shuffle_state_style = if app.config.shuffle { on } else { label_style() };
+    let shuffle_state_style = if app.config.shuffle {
+        on
+    } else {
+        label_style()
+    };
 
     spans.push(shortcut_sep());
     spans.push(Span::styled("L", key_style()));
@@ -847,7 +885,11 @@ fn build_now_playing_title(app: &App) -> Line<'static> {
     spans.push(shortcut_sep());
     spans.push(Span::styled("H", key_style()));
     spans.push(Span::styled(
-        if app.config.shuffle { " shuffle".to_string() } else { " shuffle:off".to_string() },
+        if app.config.shuffle {
+            " shuffle".to_string()
+        } else {
+            " shuffle:off".to_string()
+        },
         shuffle_state_style,
     ));
 
@@ -877,11 +919,7 @@ fn build_tab_title(app: &App) -> Line<'static> {
     };
     let library_label = format!("Library ({})", app.saved_playlist_row_count());
     let local_label = {
-        let name = app
-            .config
-            .local_folder_label
-            .as_deref()
-            .unwrap_or("—");
+        let name = app.config.local_folder_label.as_deref().unwrap_or("—");
         if app.local_folder_scanning {
             format!("⌂: {} (scanning…)", name)
         } else {
@@ -892,10 +930,9 @@ fn build_tab_title(app: &App) -> Line<'static> {
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     let focus_matches = |slot: ListFocus| -> bool {
         match slot {
-            ListFocus::YtPlaylist => matches!(
-                app.focus,
-                ListFocus::YtPlaylist | ListFocus::YtLibrary
-            ),
+            ListFocus::YtPlaylist => {
+                matches!(app.focus, ListFocus::YtPlaylist | ListFocus::YtLibrary)
+            }
             other => app.focus == other,
         }
     };
@@ -923,9 +960,12 @@ fn build_tab_title(app: &App) -> Line<'static> {
             ListFocus::YtPlaylist | ListFocus::YtLibrary => {
                 &[("⇥", "switch"), ("p", "add URL"), ("S", "save Unsaved")]
             }
-            ListFocus::LocalFolder => {
-                &[("⇥", "switch"), ("+", "add"), ("↵", "play"), ("o", "change folder")]
-            }
+            ListFocus::LocalFolder => &[
+                ("⇥", "switch"),
+                ("+", "add"),
+                ("↵", "play"),
+                ("o", "change folder"),
+            ],
         };
         for (k, l) in context.iter() {
             spans.push(shortcut_sep());
@@ -955,7 +995,10 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             };
             (pause, body)
         }
-        None => ("  ", "(nothing playing — pick a track and press Enter)".to_string()),
+        None => (
+            "  ",
+            "(nothing playing — pick a track and press Enter)".to_string(),
+        ),
     };
 
     let rows = Layout::default()
@@ -985,7 +1028,11 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     ]);
     f.render_widget(Paragraph::new(title_line), rows[0]);
 
-    let ratio = if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) } else { 0.0 };
+    let ratio = if dur > 0.0 {
+        (pos / dur).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     const MAX_BAR: u16 = 80;
     const SAFETY: u16 = 4;
     let bar_width = rows[1].width.saturating_sub(SAFETY).min(MAX_BAR);
@@ -1117,7 +1164,9 @@ fn cursor_spans(sprite: &Sprite, ratio: f64, width: u16) -> Vec<Span<'static>> {
         Span::styled(trail, Style::default().fg(sprite.accent)),
         Span::styled(
             cat,
-            Style::default().fg(sprite.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(sprite.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(lead, Style::default().fg(Color::DarkGray)),
     ]
@@ -1162,10 +1211,18 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
     let h = 29.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let text = vec![
-        Line::from(Span::styled(" ytmtui — keybindings ", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " ytmtui — keybindings ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  s        Search YouTube"),
         Line::from("  o        Open local file (path prompt)"),
@@ -1192,7 +1249,10 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  ?        Toggle this help"),
         Line::from("  q        Quit"),
         Line::from(""),
-        Line::from(Span::styled("  Press any key to close.", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "  Press any key to close.",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
     let block = Block::default()
@@ -1215,7 +1275,12 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
     let h = 12.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let sprite = app.current_sprite();
     let registry = app.sprites();
@@ -1228,13 +1293,19 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
         .position(|l| *l == app.config.caption_lang.as_str())
         .unwrap_or(0);
 
-    let marker_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let marker_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let key_style = Style::default().fg(Color::Yellow);
     let dim = Style::default().fg(Color::DarkGray);
 
     let marker = |row_idx: usize| -> Span<'static> {
         Span::styled(
-            if app.params_row == row_idx { " ▶ " } else { "   " },
+            if app.params_row == row_idx {
+                " ▶ "
+            } else {
+                "   "
+            },
             marker_style,
         )
     };
@@ -1251,7 +1322,9 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("◀ ", dim),
             Span::styled(
                 format!("{:^12}", sprite.name),
-                Style::default().fg(sprite.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(sprite.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ▶", dim),
         ]),
@@ -1259,7 +1332,9 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
             Span::raw("      preview: "),
             Span::styled(
                 preview,
-                Style::default().fg(sprite.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(sprite.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("   "),
             Span::styled(format!("({}/{})", idx + 1, total), dim),
@@ -1271,7 +1346,9 @@ fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("◀ ", dim),
             Span::styled(
                 format!("{:^12}", app.config.caption_lang),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ▶", dim),
             Span::raw("  "),
