@@ -1,0 +1,15 @@
+pub mod app;
+pub mod audio;
+pub mod captions;
+pub mod clipboard;
+pub mod config;
+pub mod gui;
+pub mod library;
+pub mod local_scan;
+pub mod player;
+pub mod playlist;
+pub mod probe;
+pub mod sprites;
+pub mod stats;
+pub mod ui;
+pub mod ytdlp;

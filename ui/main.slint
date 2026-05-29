@@ -1,0 +1,1098 @@
+import {
+    Button, LineEdit, ListView, ScrollView, VerticalBox, HorizontalBox,
+    GridBox, GroupBox, ComboBox, Slider, ProgressIndicator, StandardButton
+} from "std-widgets.slint";
+
+// ---------- Structs shared with Rust ----------
+
+export struct TrackRow {
+    id: string,
+    title: string,
+    uploader: string,
+    duration: string,
+    platform-glyph: string,
+    depth: string,
+    is-playing: bool,
+}
+
+export struct LibraryRow {
+    title: string,
+    count-label: string,
+    duration-label: string,
+    favorite: bool,
+    glyph: string,
+    is-active: bool,
+    is-unsaved: bool,
+}
+
+// ---------- Small reusable bits ----------
+
+component IconButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    callback clicked();
+    width: text.preferred-width + 22px;
+    height: 28px;
+    border-radius: 6px;
+    background: ta.has-hover
+        ? (primary ? #7aa2f7 : #2a2c3e)
+        : (primary ? #5d80d8 : #1f2030);
+    border-width: 1px;
+    border-color: primary ? #7aa2f7 : #3a3c52;
+    animate background { duration: 80ms; }
+    text := Text {
+        text: label;
+        color: primary ? #0e1018 : #c0caf5;
+        font-size: 12px;
+        font-weight: primary ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component TabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 34px;
+    border-radius: 6px;
+    background: selected ? #2c3045 : (ta.has-hover ? #20222f : transparent);
+    animate background { duration: 80ms; }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        Text {
+            text: label;
+            color: selected ? #c0caf5 : #6c7393;
+            font-size: 13px;
+            font-weight: selected ? 600 : 500;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+component TrackListRow inherits Rectangle {
+    in property <TrackRow> item;
+    in property <bool> selected;
+    callback play();
+    callback add();
+    height: 32px;
+    border-radius: 4px;
+    background: selected
+        ? #2c3045
+        : (ta.has-hover ? #1f2030 : transparent);
+    animate background { duration: 60ms; }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        // Playing marker
+        Text {
+            text: item.is-playing ? "▶" : " ";
+            color: #9ece6a;
+            width: 14px;
+            vertical-alignment: center;
+            font-size: 13px;
+        }
+        Text {
+            text: item.duration;
+            color: #6c7393;
+            width: 52px;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+        Text {
+            text: item.platform-glyph;
+            color: #bb9af7;
+            width: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: item.depth;
+            color: #565b75;
+            width: item.depth == "" ? 0px : 28px;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: item.title;
+            color: #c0caf5;
+            font-size: 13px;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: item.uploader == "" ? "" : "— " + item.uploader;
+            color: #565b75;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        IconButton {
+            label: "+";
+            clicked => { root.add(); }
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.play(); }
+        // double-click acts like Enter on selection
+        double-clicked => { root.play(); }
+    }
+}
+
+component LibraryListRow inherits Rectangle {
+    in property <LibraryRow> item;
+    in property <bool> selected;
+    callback activate();
+    callback toggle-fav();
+    callback remove();
+    height: 34px;
+    border-radius: 4px;
+    background: selected
+        ? #2c3045
+        : (ta.has-hover ? #1f2030 : transparent);
+    animate background { duration: 60ms; }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        Text {
+            text: item.is-active ? "▶" : " ";
+            color: #9ece6a;
+            width: 14px;
+            vertical-alignment: center;
+            font-size: 13px;
+        }
+        Rectangle {
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            background: ta-fav.has-hover ? #2a2c3e : transparent;
+            animate background { duration: 60ms; }
+            Text {
+                text: item.is-unsaved ? "" : (item.favorite ? "★" : "☆");
+                color: item.favorite ? #e0af68 : #565b75;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            ta-fav := TouchArea { clicked => { root.toggle-fav(); } }
+        }
+        Text {
+            text: item.glyph;
+            color: item.is-unsaved ? #e0af68 : #bb9af7;
+            width: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: item.title;
+            color: item.is-unsaved ? #e0af68 : #c0caf5;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: item.count-label;
+            color: #565b75;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: item.duration-label;
+            color: #565b75;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: item.is-unsaved ? 0px : 22px;
+            height: 22px;
+            border-radius: 4px;
+            background: ta-rm.has-hover ? #f7768e : transparent;
+            animate background { duration: 60ms; }
+            Text {
+                text: item.is-unsaved ? "" : "×";
+                color: ta-rm.has-hover ? #1a1b26 : #565b75;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            ta-rm := TouchArea { clicked => { root.remove(); } }
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.activate(); }
+        double-clicked => { root.activate(); }
+    }
+}
+
+// ---------- Window ----------
+
+export component MainWindow inherits Window {
+    title: "ytmtui";
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    min-width: 820px;
+    min-height: 520px;
+    background: #1a1b26;
+    // The actual family is chosen at runtime by
+    // gui.rs::register_fallback_fonts (reads the OS's real font name from
+    // the font file's name-table so we don't hardcode a family that
+    // doesn't exist on this Mac).
+    in-out property <string> ui-font-family: "";
+    default-font-family: ui-font-family;
+
+    // ===== state from Rust =====
+    in property <[TrackRow]> results;
+    in property <[TrackRow]> tracks;
+    in property <[TrackRow]> local-tracks;
+    in property <[LibraryRow]> library-rows;
+
+    in property <string> status-text;
+    in property <int> active-tab;
+    in property <int> results-count;
+    in property <int> tracks-count;
+    in property <int> local-count;
+    in property <int> library-count;
+    in property <string> active-playlist-title;
+    in property <bool> is-searching;
+    in property <bool> is-loading-playlist;
+    in property <bool> is-scanning-local;
+
+    in property <string> current-title;
+    in property <string> current-uploader;
+    in property <string> current-source-label;
+    in property <string> position-str;
+    in property <string> duration-str;
+    in property <float> playback-ratio;
+    in property <bool> is-paused;
+    in property <bool> has-current;
+
+    in property <bool> show-captions;
+    in property <string> caption-text;
+    in property <string> caption-status-label;
+
+    in property <int> volume;
+    in property <string> loop-mode-label;
+    in property <bool> shuffle-on;
+    in property <string> device-name;
+
+    in property <bool> show-help;
+    in property <bool> show-params;
+    in property <bool> show-nerd;
+    in property <bool> show-volume-popup;
+    in-out property <bool> show-save-dialog;
+    in-out property <string> save-dialog-default;
+    in property <string> ytmtui-version;
+    in property <string> mpv-version;
+    in property <string> ytdlp-version;
+    in property <string> cpu-summary;
+    in property <string> ram-summary;
+    in property <string> codec-label;
+    in property <string> bitrate-label;
+    in property <string> samplerate-label;
+    in property <string> channels-label;
+    in property <string> device-detail;
+    in property <string> sprite-name;
+    in property <string> sprite-preview;
+    in property <int> sprite-index;
+    in property <int> sprite-total;
+    in property <string> caption-lang;
+    in property <int> caption-lang-index;
+    in property <int> caption-lang-total;
+
+    in property <int> results-selected;
+    in property <int> tracks-selected;
+    in property <int> local-selected;
+    in property <int> library-selected;
+
+    // ===== callbacks to Rust =====
+    callback submit-search(string);
+    callback open-file(string);
+    callback open-playlist-url(string);
+    callback save-playlist(string);
+    callback play-result(int);
+    callback play-track(int);
+    callback play-local(int);
+    callback add-result-to-playlist(int);
+    callback add-local-to-playlist(int);
+    callback remove-track(int);
+    callback activate-library-item(int);
+    callback toggle-favorite(int);
+    callback remove-library-entry(int);
+    callback toggle-pause();
+    callback next-track();
+    callback prev-track();
+    callback seek(float);
+    callback seek-absolute(float);
+    callback set-volume(float);
+    callback set-tab(int);
+    callback cycle-loop();
+    callback toggle-shuffle();
+    callback toggle-captions();
+    callback toggle-nerd();
+    callback toggle-help();
+    callback toggle-params();
+    callback cycle-sprite(int);
+    callback cycle-caption-lang(int);
+    callback yank-url();
+    callback quit();
+
+    // ----- main layout -----
+    VerticalLayout {
+        spacing: 0px;
+
+        // ── Header: search input + global actions
+        Rectangle {
+            background: #16171f;
+            height: 56px;
+            border-width: 0px;
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 8px;
+                search-box := LineEdit {
+                    placeholder-text: "Search YouTube / Bilibili / Local (start with #Y, #B, #H to scope)";
+                    accepted => {
+                        root.submit-search(self.text);
+                        self.text = "";
+                    }
+                    horizontal-stretch: 1;
+                }
+                LineEdit {
+                    placeholder-text: "Open file or folder (~/path ok)…";
+                    accepted => {
+                        root.open-file(self.text);
+                        self.text = "";
+                    }
+                    horizontal-stretch: 1;
+                }
+                LineEdit {
+                    placeholder-text: "YouTube / Bilibili playlist URL";
+                    accepted => {
+                        root.open-playlist-url(self.text);
+                        self.text = "";
+                    }
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    label: "Help";
+                    clicked => { root.toggle-help(); }
+                }
+                IconButton {
+                    label: "Params";
+                    clicked => { root.toggle-params(); }
+                }
+                IconButton {
+                    label: "Stats";
+                    clicked => { root.toggle-nerd(); }
+                }
+                IconButton {
+                    label: "Quit";
+                    clicked => { root.quit(); }
+                }
+            }
+        }
+
+        // ── Tab bar
+        Rectangle {
+            background: #1a1b26;
+            height: 44px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                spacing: 6px;
+                TabButton {
+                    label: "Results (" + root.results-count + ")"
+                        + (root.is-searching ? "  …" : "");
+                    selected: root.active-tab == 0;
+                    clicked => { root.set-tab(0); }
+                }
+                TabButton {
+                    label: "Library (" + root.library-count + ")";
+                    selected: root.active-tab == 1;
+                    clicked => { root.set-tab(1); }
+                }
+                TabButton {
+                    label: "Local (" + root.local-count + ")"
+                        + (root.is-scanning-local ? "  …" : "");
+                    selected: root.active-tab == 2;
+                    clicked => { root.set-tab(2); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "vol " + root.volume + "%   loop:" + root.loop-mode-label
+                        + (root.shuffle-on ? "  shuffle" : "");
+                    color: #6c7393;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                IconButton {
+                    label: "↻ loop";
+                    clicked => { root.cycle-loop(); }
+                }
+                IconButton {
+                    label: root.shuffle-on ? "shuf: on" : "shuf: off";
+                    clicked => { root.toggle-shuffle(); }
+                }
+                IconButton {
+                    label: root.show-captions ? "CC: on" : "CC: off";
+                    clicked => { root.toggle-captions(); }
+                }
+                IconButton {
+                    label: "Copy URL";
+                    clicked => { root.yank-url(); }
+                }
+            }
+        }
+
+        // ── Tab content area
+        Rectangle {
+            background: #1a1b26;
+            vertical-stretch: 1;
+            border-width: 0px;
+            VerticalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+
+                // Results tab
+                if root.active-tab == 0: Rectangle {
+                    background: #1f2030;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 6px;
+                        ListView {
+                            for r[i] in root.results: TrackListRow {
+                                item: r;
+                                selected: i == root.results-selected;
+                                play => { root.play-result(i); }
+                                add => { root.add-result-to-playlist(i); }
+                            }
+                        }
+                        if root.results.length == 0: Text {
+                            text: root.is-searching
+                                ? "Searching…"
+                                : "No results yet. Type a query in the search box above.";
+                            color: #565b75;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Library tab — split: saved playlists left, tracks right
+                if root.active-tab == 1: HorizontalLayout {
+                    spacing: 8px;
+                    // Saved Playlists pane
+                    Rectangle {
+                        background: #1f2030;
+                        border-radius: 8px;
+                        horizontal-stretch: 4;
+                        VerticalLayout {
+                            padding: 6px;
+                            Text {
+                                text: "Saved Playlists (" + root.library-count + ")";
+                                color: #6c7393;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+                            ListView {
+                                for r[i] in root.library-rows: LibraryListRow {
+                                    item: r;
+                                    selected: i == root.library-selected;
+                                    activate => { root.activate-library-item(i); }
+                                    toggle-fav => { root.toggle-favorite(i); }
+                                    remove => { root.remove-library-entry(i); }
+                                }
+                            }
+                            if root.library-rows.length == 0: Text {
+                                text: "Empty. Paste a YT/Bilibili playlist URL above, or play a track to seed Unsaved.";
+                                color: #565b75;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    // Tracks pane
+                    Rectangle {
+                        background: #1f2030;
+                        border-radius: 8px;
+                        horizontal-stretch: 6;
+                        VerticalLayout {
+                            padding: 6px;
+                            HorizontalLayout {
+                                Text {
+                                    text: "Tracks · " + root.active-playlist-title
+                                        + (root.is-loading-playlist ? " (loading…)"
+                                            : " (" + root.tracks-count + ")");
+                                    color: #6c7393;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                }
+                                IconButton {
+                                    label: "Save Unsaved as…";
+                                    clicked => {
+                                        root.save-dialog-default = root.active-playlist-title == "Unsaved"
+                                            ? ""
+                                            : root.active-playlist-title;
+                                        root.show-save-dialog = true;
+                                    }
+                                }
+                            }
+                            ListView {
+                                for r[i] in root.tracks: TrackListRow {
+                                    item: r;
+                                    selected: i == root.tracks-selected;
+                                    play => { root.play-track(i); }
+                                    add => { root.remove-track(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Local tab
+                if root.active-tab == 2: Rectangle {
+                    background: #1f2030;
+                    border-radius: 8px;
+                    VerticalLayout {
+                        padding: 6px;
+                        Text {
+                            text: root.is-scanning-local
+                                ? "Scanning local folder…"
+                                : (root.local-count + " local files");
+                            color: #6c7393;
+                            font-size: 12px;
+                            font-weight: 600;
+                        }
+                        ListView {
+                            for r[i] in root.local-tracks: TrackListRow {
+                                item: r;
+                                selected: i == root.local-selected;
+                                play => { root.play-local(i); }
+                                add => { root.add-local-to-playlist(i); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Captions strip (optional)
+        if root.show-captions: Rectangle {
+            background: #16171f;
+            height: 56px;
+            border-width: 1px;
+            border-color: #2a2c3e;
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 10px;
+                Text {
+                    text: root.caption-status-label;
+                    color: #565b75;
+                    font-size: 11px;
+                    width: 120px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.caption-text == "" ? "(no caption at this time)" : root.caption-text;
+                    color: #c0caf5;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // ── Now Playing card
+        Rectangle {
+            background: #16171f;
+            height: 96px;
+            border-width: 1px;
+            border-color: #2a2c3e;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: root.is-paused ? "⏸" : "▶";
+                        color: #9ece6a;
+                        font-size: 16px;
+                        vertical-alignment: center;
+                        width: 22px;
+                    }
+                    Text {
+                        text: root.has-current
+                            ? root.current-title
+                            : "(nothing playing — pick a track and press play)";
+                        color: #c0caf5;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.has-current ? "— " + root.current-uploader : "";
+                        color: #6c7393;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.has-current
+                            ? "from " + root.current-source-label
+                            : "";
+                        color: #565b75;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.position-str + " / " + root.duration-str;
+                        color: #6c7393;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                }
+                // Progress + transport item
+                HorizontalLayout {
+                    spacing: 10px;
+                    IconButton {
+                        label: "⏮";
+                        clicked => { root.prev-track(); }
+                    }
+                    IconButton {
+                        label: "−60";
+                        clicked => { root.seek(-60.0); }
+                    }
+                    IconButton {
+                        label: "−10";
+                        clicked => { root.seek(-10.0); }
+                    }
+                    IconButton {
+                        label: root.is-paused ? "▶ Play" : "⏸ Pause";
+                        primary: true;
+                        clicked => { root.toggle-pause(); }
+                    }
+                    IconButton {
+                        label: "+10";
+                        clicked => { root.seek(10.0); }
+                    }
+                    IconButton {
+                        label: "+60";
+                        clicked => { root.seek(60.0); }
+                    }
+                    IconButton {
+                        label: "⏭";
+                        clicked => { root.next-track(); }
+                    }
+                    // Progress bar (clickable)
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 28px;
+                        background: #1f2030;
+                        border-radius: 4px;
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            height: parent.height;
+                            width: parent.width * root.playback-ratio;
+                            background: #7aa2f7;
+                            border-radius: 4px;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.seek-absolute(self.mouse-x / parent.width);
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.device-name;
+                        color: #6c7393;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    // Volume slider (compact)
+                    Rectangle {
+                        width: 110px;
+                        height: 28px;
+                        background: #1f2030;
+                        border-radius: 4px;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text {
+                                text: "vol";
+                                color: #6c7393;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                width: 22px;
+                            }
+                            Slider {
+                                minimum: 0;
+                                maximum: 100;
+                                value: root.volume;
+                                changed(v) => {
+                                    root.set-volume(v);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Status bar
+        Rectangle {
+            background: #16171f;
+            height: 22px;
+            border-width: 0px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: root.status-text;
+                    color: #6c7393;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // ===== Overlays =====
+
+    if root.show-help: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.toggle-help(); }
+        }
+        Rectangle {
+            width: 600px;
+            height: 480px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 8px;
+                Text {
+                    text: "ytmtui — quick reference";
+                    color: #c0caf5;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Search bar: type a query and press Enter. Prefix with #Y / #B / #H to scope to YouTube, Bilibili, or local files only.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Open file/folder: absolute or ~/relative path. Folders are scanned up to 4 levels deep.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Playlist URL: paste a YouTube or Bilibili playlist URL to load it into the Library.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Click any track item to play. Click + to add to the Unsaved playlist. Click × on a saved playlist item to delete it.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Click on the progress bar to seek to that position. Use the slider in the now-playing card for volume.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    alignment: end;
+                    IconButton {
+                        label: "Close";
+                        clicked => { root.toggle-help(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-params: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.toggle-params(); }
+        }
+        Rectangle {
+            width: 480px;
+            height: 280px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: "Parameters";
+                    color: #c0caf5;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                // Progress cursor item
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: "Progress cursor";
+                        color: #6c7393;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        width: 140px;
+                    }
+                    IconButton {
+                        label: "◀";
+                        clicked => { root.cycle-sprite(-1); }
+                    }
+                    Text {
+                        text: root.sprite-name + "  " + root.sprite-preview;
+                        color: #c0caf5;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    IconButton {
+                        label: "▶";
+                        clicked => { root.cycle-sprite(1); }
+                    }
+                    Text {
+                        text: "(" + (root.sprite-index + 1) + "/" + root.sprite-total + ")";
+                        color: #565b75;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        width: 50px;
+                    }
+                }
+                // Caption language item
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: "CC language";
+                        color: #6c7393;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        width: 140px;
+                    }
+                    IconButton {
+                        label: "◀";
+                        clicked => { root.cycle-caption-lang(-1); }
+                    }
+                    Text {
+                        text: root.caption-lang;
+                        color: #c0caf5;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    IconButton {
+                        label: "▶";
+                        clicked => { root.cycle-caption-lang(1); }
+                    }
+                    Text {
+                        text: "(" + (root.caption-lang-index + 1) + "/" + root.caption-lang-total + ")";
+                        color: #565b75;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        width: 50px;
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    alignment: end;
+                    IconButton {
+                        label: "Close";
+                        clicked => { root.toggle-params(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-nerd: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.toggle-nerd(); }
+        }
+        Rectangle {
+            width: 520px;
+            height: 440px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                Text {
+                    text: "Nerd stats";
+                    color: #c0caf5;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                Text { text: "ytmtui  v" + root.ytmtui-version; color: #c0caf5; font-size: 12px; }
+                Text { text: "mpv     " + root.mpv-version; color: #c0caf5; font-size: 12px; }
+                Text { text: "yt-dlp  " + root.ytdlp-version; color: #c0caf5; font-size: 12px; }
+                Rectangle { height: 8px; }
+                Text { text: "CPU  " + root.cpu-summary; color: #9ece6a; font-size: 12px; font-weight: 600; }
+                Text { text: "RAM  " + root.ram-summary; color: #7aa2f7; font-size: 12px; font-weight: 600; }
+                Rectangle { height: 8px; }
+                Text { text: "codec       " + root.codec-label; color: #c0caf5; font-size: 12px; }
+                Text { text: "bitrate     " + root.bitrate-label; color: #c0caf5; font-size: 12px; }
+                Text { text: "sample-rate " + root.samplerate-label; color: #c0caf5; font-size: 12px; }
+                Text { text: "channels    " + root.channels-label; color: #c0caf5; font-size: 12px; }
+                Rectangle { height: 8px; }
+                Text { text: "device  " + root.device-name; color: #c0caf5; font-size: 12px; }
+                Text { text: "model   " + root.device-detail; color: #c0caf5; font-size: 12px; }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    alignment: end;
+                    IconButton {
+                        label: "Close";
+                        clicked => { root.toggle-nerd(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-save-dialog: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.show-save-dialog = false; }
+        }
+        Rectangle {
+            width: 420px;
+            height: 180px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                Text {
+                    text: "Save Unsaved playlist as";
+                    color: #c0caf5;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Same name overwrites the existing entry.";
+                    color: #6c7393;
+                    font-size: 11px;
+                }
+                save-input := LineEdit {
+                    placeholder-text: "Playlist name";
+                    text: root.save-dialog-default;
+                    accepted => {
+                        if (self.text != "") {
+                            root.save-playlist(self.text);
+                            root.show-save-dialog = false;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    IconButton {
+                        label: "Cancel";
+                        clicked => { root.show-save-dialog = false; }
+                    }
+                    IconButton {
+                        label: "Save";
+                        primary: true;
+                        clicked => {
+                            if (save-input.text != "") {
+                                root.save-playlist(save-input.text);
+                                root.show-save-dialog = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-volume-popup: Rectangle {
+        width: 240px;
+        height: 48px;
+        x: parent.width - self.width - 24px;
+        y: parent.height - self.height - 130px;
+        background: #1f2030;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: #3a3c52;
+        HorizontalLayout {
+            padding: 8px;
+            spacing: 8px;
+            Text {
+                text: "vol " + root.volume + "%";
+                color: #c0caf5;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                width: 70px;
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 12px;
+                background: #2a2c3e;
+                border-radius: 6px;
+                y: (parent.height - self.height) / 2;
+                Rectangle {
+                    x: 0; y: 0;
+                    width: parent.width * root.volume / 100;
+                    height: parent.height;
+                    background: #7aa2f7;
+                    border-radius: 6px;
+                }
+            }
+        }
+    }
+}

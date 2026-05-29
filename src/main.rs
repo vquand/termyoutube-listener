@@ -1,20 +1,4 @@
-mod app;
-mod audio;
-mod captions;
-mod clipboard;
-mod config;
-mod library;
-mod local_scan;
-mod player;
-mod playlist;
-mod probe;
-mod sprites;
-mod stats;
-mod ui;
-mod ytdlp;
-
 use anyhow::Result;
-use app::{App, Mode};
 use crossterm::{
     event::{
         self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -23,10 +7,17 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use player::Player;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
+use ytmtui::app::{self, App, Mode};
+use ytmtui::config;
+use ytmtui::library;
+use ytmtui::player::{self, Player};
+use ytmtui::playlist;
+use ytmtui::sprites;
+use ytmtui::ui;
+use ytmtui::ytdlp;
 
 fn main() -> Result<()> {
     if let Err(e) = ytdlp::check_installed() {

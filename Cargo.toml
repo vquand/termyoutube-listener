@@ -3,6 +3,19 @@ name = "ytmtui"
 version = "0.1.0"
 edition = "2021"
 description = "Minimal terminal-based YouTube Music player"
+build = "build.rs"
+
+[lib]
+name = "ytmtui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ytmtui"
+path = "src/main.rs"
+
+[[bin]]
+name = "ytmtui-gui"
+path = "src/bin/ytmtui-gui.rs"
 
 [dependencies]
 ratatui = "0.29"
@@ -11,6 +24,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+interprocess = "2"
+slint = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
+i-slint-common = { version = "1.8", features = ["shared-fontique"] }
+
+[build-dependencies]
+slint-build = "1.8"
 
 [profile.release]
 opt-level = "z"

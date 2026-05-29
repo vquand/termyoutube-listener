@@ -1,18 +1,26 @@
 use anyhow::{Context, Result};
+use interprocess::local_socket::prelude::*;
+#[cfg(unix)]
+use interprocess::local_socket::GenericFilePath;
+#[cfg(windows)]
+use interprocess::local_socket::GenericNamespaced;
+use interprocess::local_socket::Stream;
+use interprocess::TryClone;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Wraps a long-running `mpv --idle` process controlled via JSON IPC over a unix socket.
+/// Wraps a long-running `mpv --idle` process controlled via JSON IPC over a
+/// local socket. The same code path uses Unix sockets on macOS/Linux and
+/// named pipes on Windows; the `interprocess` crate hides the difference.
 pub struct Player {
     _child: Child,
     socket_path: PathBuf,
-    writer: Mutex<UnixStream>,
+    writer: Mutex<Stream>,
     state: Arc<Mutex<PlayerState>>,
 }
 
@@ -29,9 +37,71 @@ pub struct PlayerState {
     pub channels: Option<u32>,
 }
 
+/// Address the mpv IPC socket on disk (Unix) or in the named-pipe namespace
+/// (Windows). Returned as a `PathBuf` so the existing `--input-ipc-server`
+/// arg builder still works unchanged.
+#[cfg(unix)]
+fn ipc_socket_path(pid: u32) -> PathBuf {
+    std::env::temp_dir().join(format!("ytmtui-mpv-{}.sock", pid))
+}
+
+#[cfg(windows)]
+fn ipc_socket_path(pid: u32) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\ytmtui-mpv-{}", pid))
+}
+
+/// Try-connect-with-retry. The socket file (Unix) or named pipe (Windows)
+/// is created asynchronously by mpv after spawn, so we poll instead of
+/// stat'ing — Windows named pipes never show up in the filesystem.
+fn connect_with_retry(socket_path: &PathBuf, deadline: Duration) -> Result<Stream> {
+    let start = Instant::now();
+    loop {
+        let attempt = connect_once(socket_path);
+        match attempt {
+            Ok(s) => return Ok(s),
+            Err(_) if start.elapsed() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("mpv IPC socket never came up at {}", socket_path.display())
+                });
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn connect_once(socket_path: &PathBuf) -> Result<Stream> {
+    let name = socket_path
+        .as_os_str()
+        .to_fs_name::<GenericFilePath>()
+        .context("invalid Unix socket path")?;
+    Ok(Stream::connect(name)?)
+}
+
+#[cfg(windows)]
+fn connect_once(socket_path: &PathBuf) -> Result<Stream> {
+    // mpv listens on `\\.\pipe\<name>`; interprocess's namespaced lookup
+    // wants the bare `<name>` and re-derives the prefix itself.
+    let raw = socket_path.to_string_lossy();
+    let name_str = raw
+        .strip_prefix(r"\\.\pipe\")
+        .unwrap_or(&raw)
+        .to_string();
+    let name = name_str
+        .to_ns_name::<GenericNamespaced>()
+        .context("invalid named-pipe name")?;
+    Ok(Stream::connect(name)?)
+}
+
 impl Player {
     pub fn spawn() -> Result<Self> {
-        let socket_path = std::env::temp_dir().join(format!("ytmtui-mpv-{}.sock", std::process::id()));
+        let socket_path = ipc_socket_path(std::process::id());
+        // On Unix the path is in /tmp and may be left over from a previous
+        // crashed run; clear it. On Windows the path lives in the pipe
+        // namespace and remove_file is a no-op / not meaningful.
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&socket_path);
 
         let child = Command::new("mpv")
@@ -51,16 +121,7 @@ impl Player {
             .spawn()
             .context("failed to spawn mpv (is it installed and on PATH?)")?;
 
-        // wait for socket to appear (mpv creates it asynchronously)
-        let start = Instant::now();
-        while !socket_path.exists() {
-            if start.elapsed() > Duration::from_secs(5) {
-                anyhow::bail!("mpv IPC socket never appeared at {}", socket_path.display());
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-
-        let writer = UnixStream::connect(&socket_path).context("failed to connect to mpv IPC")?;
+        let writer = connect_with_retry(&socket_path, Duration::from_secs(5))?;
         let reader_stream = writer.try_clone().context("clone mpv socket")?;
 
         let state = Arc::new(Mutex::new(PlayerState::default()));
@@ -220,7 +281,10 @@ impl Drop for Player {
         let _ = self.send(&json!({ "command": ["quit"] }));
         thread::sleep(Duration::from_millis(50));
         let _ = self._child.kill();
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
+        #[cfg(windows)]
+        let _ = &self.socket_path; // pipe namespace cleans itself up
     }
 }
 

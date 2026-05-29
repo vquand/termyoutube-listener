@@ -38,4 +38,11 @@ fn main() {
     }
     out.push_str("];\n");
     fs::write(&out_path, out).expect("write builtin_sprites.rs");
+
+    // Slint UI for the ytmtui-gui binary. The .slint file rerun is handled
+    // by slint-build itself; we only need to nudge cargo when the file
+    // moves on disk.
+    let slint_path = PathBuf::from(&manifest_dir).join("ui").join("main.slint");
+    println!("cargo:rerun-if-changed={}", slint_path.display());
+    slint_build::compile(&slint_path).expect("compile Slint UI");
 }
