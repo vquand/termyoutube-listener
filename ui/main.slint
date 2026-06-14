@@ -464,6 +464,7 @@ export component MainWindow inherits Window {
 
     callback submit-search(string, string);
     callback open-file(string);
+    callback browse-file();
     callback open-playlist-url(string);
     callback save-playlist(string);
     callback select-result(int);
@@ -1170,7 +1171,7 @@ export component MainWindow inherits Window {
                     font-weight: 700;
                 }
                 Text {
-                    text: "Enter a file path or folder path (~ ok). Folders are scanned up to 4 levels deep.";
+                    text: "Enter a path, or click Browse to pick a folder with the file explorer. Folders are scanned up to 4 levels deep.";
                     color: #6c7393;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -1184,8 +1185,15 @@ export component MainWindow inherits Window {
                     }
                 }
                 HorizontalLayout {
-                    alignment: end;
                     spacing: 8px;
+                    IconButton {
+                        label: "Browse…";
+                        clicked => {
+                            root.browse-file();
+                            root.show-file-dialog = false;
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
                     IconButton {
                         label: "Cancel";
                         clicked => { root.show-file-dialog = false; }

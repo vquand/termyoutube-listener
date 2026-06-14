@@ -90,6 +90,21 @@ fn bind_callbacks(
         });
     }
 
+    // rfd has no combined file-or-folder picker; this picks folders, the
+    // typed-path input above covers single files.
+    {
+        let app = app.clone();
+        window.on_browse_file(move || {
+            let picked = rfd::FileDialog::new()
+                .set_title("Select a folder to scan")
+                .pick_folder();
+            let Some(path) = picked else { return };
+            let mut a = app.lock().unwrap();
+            a.query = path.to_string_lossy().to_string();
+            a.submit_open_file();
+        });
+    }
+
     // Open YT/Bilibili playlist URL
     {
         let app = app.clone();
