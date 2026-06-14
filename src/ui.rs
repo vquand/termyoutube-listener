@@ -1267,7 +1267,14 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
 
 fn fmt_secs(s: f64) -> String {
     let s = s as u64;
-    format!("{}:{:02}", s / 60, s % 60)
+    let h = s / 3600;
+    let m = (s % 3600) / 60;
+    let sec = s % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, sec)
+    } else {
+        format!("{}:{:02}", m, sec)
+    }
 }
 
 fn draw_params_overlay(f: &mut Frame, app: &App, area: Rect) {

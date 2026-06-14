@@ -47,7 +47,16 @@ impl Track {
 
     pub fn duration_str(&self) -> String {
         match self.duration {
-            Some(s) => format!("{}:{:02}", s / 60, s % 60),
+            Some(s) => {
+                let h = s / 3600;
+                let m = (s % 3600) / 60;
+                let sec = s % 60;
+                if h > 0 {
+                    format!("{}:{:02}:{:02}", h, m, sec)
+                } else {
+                    format!("{}:{:02}", m, sec)
+                }
+            }
             None => "--:--".to_string(),
         }
     }
@@ -252,4 +261,39 @@ pub fn check_installed() -> Result<()> {
 pub fn version() -> Option<String> {
     let out = Command::new("yt-dlp").arg("--version").output().ok()?;
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod duration_str_tests {
+    use super::*;
+
+    fn track(dur: Option<u64>) -> Track {
+        Track {
+            id: "x".into(),
+            title: "t".into(),
+            uploader: "u".into(),
+            duration: dur,
+            source: None,
+            local_depth: None,
+            platform: Some(Platform::YouTube),
+        }
+    }
+
+    #[test]
+    fn under_an_hour_uses_mm_ss() {
+        assert_eq!(track(Some(75)).duration_str(), "1:15");
+        assert_eq!(track(Some(599)).duration_str(), "9:59");
+    }
+
+    #[test]
+    fn at_or_over_an_hour_uses_h_mm_ss() {
+        assert_eq!(track(Some(3600)).duration_str(), "1:00:00");
+        assert_eq!(track(Some(3900)).duration_str(), "1:05:00");
+        assert_eq!(track(Some(36000)).duration_str(), "10:00:00");
+    }
+
+    #[test]
+    fn unknown_duration_shows_placeholder() {
+        assert_eq!(track(None).duration_str(), "--:--");
+    }
 }
