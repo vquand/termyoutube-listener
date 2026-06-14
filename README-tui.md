@@ -7,25 +7,28 @@ arrow-key dependencies, no OS-specific media keys.
 
 | Key       | Action                              |
 | --------- | ----------------------------------- |
-| `s`       | Search YouTube                      |
-| `Enter`   | Play selected result (queues list)  |
+| `s`       | Search YouTube / Bilibili / Local   |
+| `#Y` `#B` `#H` | Prefix to scope search to one platform |
+| `Enter`   | Play selected (queues the focused list) |
 | `Space`   | Pause / resume                      |
 | `n`       | Next track                          |
 | `b`       | Back (previous track)               |
-| `f` / `F` | Forward 10 seconds / 1 minute       |
+| `f` / `F` | Forward 10s / 1min (Library pane: toggle favorite) |
 | `r` / `R` | Rewind 10 seconds / 1 minute        |
 | `j` / `k` | Move selection down / up            |
-| `Tab`     | Switch focus between Results / Playlist |
-| `+`       | Add selected result to playlist     |
-| `-` / `⌫` / `Del` | Remove selected playlist entry |
-| `L` / `l` | Cycle loop mode (off -> all -> one)   |
+| `Tab`     | Switch focus: Results / Library / Tracks / Local |
+| `+`       | Add selected to Unsaved             |
+| `-` / `⌫` / `Del` | Remove from Unsaved (or focused Library row) |
+| `d`       | Remove focused Library entry        |
+| `S`       | Save Unsaved as a named playlist    |
+| `L` / `l` | Cycle loop mode (off -> all -> one) |
 | `H` / `h` | Toggle shuffle                      |
 | `/`       | Toggle nerd-stats modal             |
 | `z` / `x` | Volume down / up (10% steps)        |
 | `c`       | Toggle closed captions strip        |
 | `y`       | Yank (copy) selected track URL      |
 | `o`       | Open a local file or scan a folder (search bar input) |
-| `p`       | Load a YouTube playlist URL (search bar input) |
+| `p`       | Load a YT / Bilibili playlist URL (search bar input) |
 | `` ` ``   | Open parameters menu                |
 | `.`       | Hide / show shortcut bar            |
 | `?`       | Toggle help overlay                 |
@@ -98,20 +101,30 @@ remains as a dim line.
 Shortcut keys render in bright cyan; active state indicators (loop on, current
 tab, etc.) render in yellow.
 
-## Playlist
+## Playlist & library
 
-The list pane is tabbed: `Results` (your current search) and `Playlist` (a
-persistent collection). `Tab` toggles which is focused; `j`/`k`/`Enter`/`+`/`-`
-all operate on the focused list.
+The list area is split into four focusable panes, cycled with `Tab`:
+`Results` (current search), `Library` (saved playlists), `Tracks` (the
+tracks of the active library entry or the live Unsaved list), and `Local`
+(the last scanned folder). `j`/`k`/`Enter`/`+`/`-` all operate on the
+focused pane.
 
-- `+` adds the highlighted search result to the playlist (dedupes by video id).
-- `-` (or Backspace / Delete) removes the highlighted playlist entry.
-- `Enter` builds the playback queue from the focused list and starts the
-  selected track. The `▶` marker stays in whichever list the queue came from
-  even if you switch focus.
+- `+` adds the highlighted track to the Unsaved list (dedupes by id).
+- `-` (or Backspace / Delete) removes from Unsaved, or the focused
+  Library row when the Library pane is active.
+- `d` removes the focused Library entry (saved playlists only; the
+  Unsaved row is not removable this way).
+- `S` saves the live Unsaved list as a named playlist (overwrites an
+  existing entry with the same name).
+- `f` toggles the favorite flag on the focused Library entry (outside
+  the Library pane it seeks forward instead).
+- `Enter` builds the playback queue from the focused list and starts
+  the selected track. The `▶` marker stays in whichever list the queue
+  came from even if you switch focus.
 
-The playlist is saved to `~/.config/ytmtui/playlist.json` (or `$XDG_CONFIG_HOME`
-equivalent) on every change.
+The Unsaved list is saved to `~/.config/ytmtui/playlist.json` (or
+`$XDG_CONFIG_HOME` equivalent) on every change; the saved-playlists
+library lives in `playlists.json` alongside it.
 
 ### Loop & shuffle
 

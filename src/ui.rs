@@ -1207,8 +1207,8 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_help_overlay(f: &mut Frame, area: Rect) {
-    let w = 60.min(area.width.saturating_sub(4));
-    let h = 29.min(area.height.saturating_sub(4));
+    let w = 64.min(area.width.saturating_sub(4));
+    let h = 40.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let rect = Rect {
@@ -1218,36 +1218,45 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         height: h,
     };
 
+    let header = Style::default().fg(Color::Cyan);
     let text = vec![
         Line::from(Span::styled(
             " ytmtui — keybindings ",
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from("  s        Search YouTube"),
-        Line::from("  o        Open local file (path prompt)"),
-        Line::from("  Enter    Play selected (queues from results)"),
-        Line::from("  Space    Pause / resume"),
-        Line::from("  n        Next track"),
-        Line::from("  b        Back (previous track)"),
-        Line::from("  f / F    Forward 10s / 1min"),
-        Line::from("  r / R    Rewind  10s / 1min"),
-        Line::from("  j / k    Move selection down / up"),
-        Line::from("  Tab      Switch focus (Results / Playlist)"),
-        Line::from("  +        Add selected result to playlist"),
-        Line::from("  -/⌫/Del  Remove selected playlist entry"),
-        Line::from("  L / l    Cycle loop mode (off → all → one)"),
-        Line::from("  H / h    Toggle shuffle"),
-        Line::from("  /        Toggle nerd-stats modal"),
-        Line::from("  z / x    Volume down / up (10% steps)"),
-        Line::from("  c        Toggle closed captions"),
-        Line::from("  y        Yank (copy) selected track URL"),
-        Line::from("  o        Open a local file or scan a folder (search bar)"),
-        Line::from("  p        Load YT/Bilibili playlist URL (search bar)"),
-        Line::from("  `        Parameters menu"),
-        Line::from("  .        Hide / show shortcut bar"),
-        Line::from("  ?        Toggle this help"),
-        Line::from("  q        Quit"),
+        Line::from(Span::styled("  Search & open", header)),
+        Line::from("  s             Search YouTube / Bilibili / Local"),
+        Line::from("  #Y #B #H      Prefix to scope search to one platform"),
+        Line::from("  o             Open a local file or scan a folder"),
+        Line::from("  p             Load a YT / Bilibili playlist URL"),
+        Line::from("  Tab           Switch focus: Results / Library / Tracks / Local"),
+        Line::from(""),
+        Line::from(Span::styled("  Playback", header)),
+        Line::from("  Enter         Play selected (queues the focused list)"),
+        Line::from("  Space         Pause / resume"),
+        Line::from("  n / b         Next / previous track"),
+        Line::from("  f / F         Forward 10s / 1min (Library pane: toggle favorite)"),
+        Line::from("  r / R         Rewind 10s / 1min"),
+        Line::from("  z / x         Volume down / up (10% steps)"),
+        Line::from("  c             Toggle closed captions"),
+        Line::from(""),
+        Line::from(Span::styled("  Lists & library", header)),
+        Line::from("  j / k         Move selection down / up"),
+        Line::from("  +             Add selected to Unsaved"),
+        Line::from("  - / ⌫ / Del   Remove from Unsaved (or focused Library row)"),
+        Line::from("  d             Remove focused Library entry"),
+        Line::from("  S             Save Unsaved as a named playlist"),
+        Line::from("  y             Yank (copy) selected track URL"),
+        Line::from("  L / l         Cycle loop (off → all → one)"),
+        Line::from("  H / h         Toggle shuffle"),
+        Line::from(""),
+        Line::from(Span::styled("  Interface", header)),
+        Line::from("  `             Parameters menu (cursor / CC language)"),
+        Line::from("  /             Nerd-stats modal"),
+        Line::from("  .             Hide / show shortcut bar"),
+        Line::from("  ?             Toggle this help"),
+        Line::from("  q             Quit (also Ctrl-C)"),
         Line::from(""),
         Line::from(Span::styled(
             "  Press any key to close.",
@@ -1260,7 +1269,6 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         .title(" Help ")
         .style(Style::default().bg(Color::Black));
     let p = Paragraph::new(text).block(block);
-    // clear under it
     f.render_widget(ratatui::widgets::Clear, rect);
     f.render_widget(p, rect);
 }
