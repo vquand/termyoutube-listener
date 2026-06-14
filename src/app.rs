@@ -1417,7 +1417,7 @@ impl App {
             let q_clone = query.clone();
             self.pending_searches += 1;
             thread::spawn(move || {
-                let res = ytdlp::search(&q_clone, 20, platform);
+                let res = ytdlp::search(&q_clone, 5, platform);
                 let _ = tx.send(SearchEvent::Done(q_clone, res));
             });
         }

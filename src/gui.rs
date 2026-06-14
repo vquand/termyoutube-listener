@@ -20,6 +20,7 @@ pub fn run(app: App) -> anyhow::Result<()> {
     let app = Arc::new(Mutex::new(app));
     crate::mpris::spawn(app.clone());
     let window = MainWindow::new()?;
+    slint::set_xdg_app_id("ytmtui-gui")?;
     if let Some(family) = font_family {
         window.set_ui_font_family(family.into());
     }
@@ -33,6 +34,9 @@ pub fn run(app: App) -> anyhow::Result<()> {
         let weak = window.as_weak();
         timer.start(TimerMode::Repeated, TICK, move || {
             let mut a = app.lock().unwrap();
+            if a.should_quit {
+                return;
+            }
             a.drain_events();
             a.refresh_stats();
             if a.should_quit {
@@ -48,6 +52,8 @@ pub fn run(app: App) -> anyhow::Result<()> {
     }
 
     window.run()?;
+
+    app.lock().unwrap().player.shutdown();
     Ok(())
 }
 

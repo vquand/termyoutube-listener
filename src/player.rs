@@ -278,17 +278,21 @@ impl Player {
     pub fn pid(&self) -> u32 {
         self._child.id()
     }
-}
 
-impl Drop for Player {
-    fn drop(&mut self) {
+    pub fn shutdown(&mut self) {
         let _ = self.send(&json!({ "command": ["quit"] }));
         thread::sleep(Duration::from_millis(50));
         let _ = self._child.kill();
         #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
         #[cfg(windows)]
-        let _ = &self.socket_path; // pipe namespace cleans itself up
+        let _ = &self.socket_path;
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

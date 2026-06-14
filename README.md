@@ -23,13 +23,16 @@ to do the heavy lifting.
 
 ## Prerequisites
 
-You need `mpv` and `yt-dlp` on your `$PATH`.
+You need `mpv` and `yt-dlp` on your `$PATH`. For the copy-URL feature on Linux
+you also need a clipboard tool (`xclip`, `wl-clipboard`, or `xsel`).
 
 ```sh
+# macOS
 brew install mpv yt-dlp
-```
 
-(Or your distro's equivalent; both are widely packaged.)
+# Debian/Ubuntu
+sudo apt install mpv yt-dlp xclip
+```
 
 ## Build & run
 
@@ -60,7 +63,9 @@ icon under the user icon theme. No root access is required.
 ## How playback works
 
 1. You search for something (type a query, hit Enter).
-2. A background thread runs `yt-dlp --flat-playlist --dump-json ytsearch20:<q>`.
+2. A background thread runs `yt-dlp --flat-playlist --dump-json ytsearch5:<q>`.
+   YouTube and Bilibili are searched in parallel, each returning up to 5
+   results (max 10 combined).
    Results stream back into the UI without blocking input.
 3. Selecting a result queues the visible result list and tells the existing
    `mpv` instance to `loadfile https://youtube.com/watch?v=...`. mpv invokes
