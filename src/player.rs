@@ -85,10 +85,7 @@ fn connect_once(socket_path: &PathBuf) -> Result<Stream> {
     // mpv listens on `\\.\pipe\<name>`; interprocess's namespaced lookup
     // wants the bare `<name>` and re-derives the prefix itself.
     let raw = socket_path.to_string_lossy();
-    let name_str = raw
-        .strip_prefix(r"\\.\pipe\")
-        .unwrap_or(&raw)
-        .to_string();
+    let name_str = raw.strip_prefix(r"\\.\pipe\").unwrap_or(&raw).to_string();
     let name = name_str
         .to_ns_name::<GenericNamespaced>()
         .context("invalid named-pipe name")?;
@@ -165,9 +162,8 @@ impl Player {
                                     }
                                 }
                                 "audio-codec-name" => {
-                                    s.audio_codec = data
-                                        .and_then(|d| d.as_str())
-                                        .map(|x| x.to_string());
+                                    s.audio_codec =
+                                        data.and_then(|d| d.as_str()).map(|x| x.to_string());
                                 }
                                 "audio-bitrate" => {
                                     s.audio_bitrate = data.and_then(|d| d.as_f64());
@@ -259,12 +255,20 @@ impl Player {
         self.command(vec![json!("cycle"), json!("pause")])
     }
 
+    pub fn set_pause(&self, paused: bool) -> Result<()> {
+        self.command(vec![json!("set_property"), json!("pause"), json!(paused)])
+    }
+
     pub fn seek_relative(&self, seconds: f64) -> Result<()> {
         self.command(vec![json!("seek"), json!(seconds), json!("relative")])
     }
 
     pub fn set_volume(&self, v: u8) -> Result<()> {
-        self.command(vec![json!("set_property"), json!("volume"), json!(v as i64)])
+        self.command(vec![
+            json!("set_property"),
+            json!("volume"),
+            json!(v as i64),
+        ])
     }
 
     pub fn state(&self) -> PlayerState {

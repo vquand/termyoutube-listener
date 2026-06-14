@@ -27,6 +27,7 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 interprocess = "2"
 slint = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
 i-slint-common = { version = "1.8", features = ["shared-fontique"] }
+zbus = "5.15"
 
 [build-dependencies]
 slint-build = "1.8"

@@ -882,7 +882,7 @@ impl App {
         self.set_volume(self.config.volume.saturating_sub(10));
     }
 
-    fn set_volume(&mut self, v: u8) {
+    pub fn set_volume(&mut self, v: u8) {
         self.config.volume = v;
         let _ = self.player.set_volume(v);
         self.volume_popup_until = Some(Instant::now() + Duration::from_millis(2000));
@@ -892,6 +892,10 @@ impl App {
     pub fn volume_popup_active(&self) -> bool {
         self.volume_popup_until
             .map_or(false, |t| Instant::now() < t)
+    }
+
+    pub fn save_config(&mut self) {
+        self.persist_config();
     }
 
     fn persist_config(&mut self) {
@@ -1756,6 +1760,16 @@ impl App {
 
     pub fn toggle_pause(&mut self) {
         let _ = self.player.toggle_pause();
+    }
+
+    pub fn pause(&mut self) {
+        let _ = self.player.set_pause(true);
+    }
+
+    pub fn play(&mut self) {
+        if self.current_track().is_some() {
+            let _ = self.player.set_pause(false);
+        }
     }
 
     pub fn seek(&mut self, seconds: f64) {

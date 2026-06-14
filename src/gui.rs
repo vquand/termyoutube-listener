@@ -7,32 +7,30 @@ use crate::ytdlp::{Platform, Track};
 use slint::{ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 slint::include_modules!();
 
 const TICK: Duration = Duration::from_millis(200);
-const VOLUME_POPUP_MS: u64 = 1500;
 
 /// Drive the Slint window against a shared App. Blocks until the window
 /// closes (or `quit` is requested).
 pub fn run(app: App) -> anyhow::Result<()> {
     let font_family = register_fallback_fonts();
     let app = Arc::new(Mutex::new(app));
+    crate::mpris::spawn(app.clone());
     let window = MainWindow::new()?;
     if let Some(family) = font_family {
         window.set_ui_font_family(family.into());
     }
-    let last_volume_change = Arc::new(Mutex::new(None::<Instant>));
 
-    bind_callbacks(&window, &app, &last_volume_change);
-    push_state(&window, &app.lock().unwrap(), &last_volume_change);
+    bind_callbacks(&window, &app);
+    push_state(&window, &app.lock().unwrap());
 
     let timer = Timer::default();
     {
         let app = app.clone();
         let weak = window.as_weak();
-        let last_volume_change = last_volume_change.clone();
         timer.start(TimerMode::Repeated, TICK, move || {
             let mut a = app.lock().unwrap();
             a.drain_events();
@@ -44,7 +42,7 @@ pub fn run(app: App) -> anyhow::Result<()> {
                 return;
             }
             if let Some(w) = weak.upgrade() {
-                push_state(&w, &a, &last_volume_change);
+                push_state(&w, &a);
             }
         });
     }
@@ -56,17 +54,21 @@ pub fn run(app: App) -> anyhow::Result<()> {
 fn bind_callbacks(
     window: &MainWindow,
     app: &Arc<Mutex<App>>,
-    last_volume_change: &Arc<Mutex<Option<Instant>>>,
 ) {
     // Search
     {
         let app = app.clone();
-        window.on_submit_search(move |q| {
+        window.on_submit_search(move |q, chip| {
+            let prefix = match chip.as_str() {
+                "youtube" => "#Y ",
+                "bilibili" => "#B ",
+                "local" => "#H ",
+                _ => "",
+            };
             let mut a = app.lock().unwrap();
-            if q.trim().is_empty() {
-                return;
-            }
-            a.query = q.to_string();
+            let full = format!("{}{}", prefix, q);
+            if q.trim().is_empty() { return; }
+            a.query = full;
             a.submit_search();
         });
     }
@@ -76,9 +78,7 @@ fn bind_callbacks(
         let app = app.clone();
         window.on_open_file(move |q| {
             let mut a = app.lock().unwrap();
-            if q.trim().is_empty() {
-                return;
-            }
+            if q.trim().is_empty() { return; }
             a.query = q.to_string();
             a.submit_open_file();
         });
@@ -89,9 +89,7 @@ fn bind_callbacks(
         let app = app.clone();
         window.on_open_playlist_url(move |q| {
             let mut a = app.lock().unwrap();
-            if q.trim().is_empty() {
-                return;
-            }
+            if q.trim().is_empty() { return; }
             a.query = q.to_string();
             a.submit_yt_playlist();
         });
@@ -102,12 +100,8 @@ fn bind_callbacks(
         let app = app.clone();
         window.on_save_playlist(move |name| {
             let trimmed = name.trim();
-            if trimmed.is_empty() {
-                return;
-            }
+            if trimmed.is_empty() { return; }
             let mut a = app.lock().unwrap();
-            // submit_save_playlist gates on focus == YtLibrary + non-empty
-            // playlist, so make sure both preconditions hold before firing.
             a.focus = ListFocus::YtLibrary;
             if a.playlist.is_empty() {
                 a.status = "nothing to save - Unsaved is empty".into();
@@ -119,6 +113,46 @@ fn bind_callbacks(
     }
 
     // Playback selectors — set the right focus/selection then play.
+    {
+        let app = app.clone();
+        window.on_select_result(move |i| {
+            let mut a = app.lock().unwrap();
+            if let Some(idx) = clamp(i, a.results.len()) {
+                a.focus = ListFocus::Results;
+                a.selected = idx;
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        window.on_select_track(move |i| {
+            let mut a = app.lock().unwrap();
+            if let Some(idx) = clamp(i, a.active_tracks().len()) {
+                a.focus = ListFocus::YtPlaylist;
+                a.yt_playlist_selected = idx;
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        window.on_select_local(move |i| {
+            let mut a = app.lock().unwrap();
+            if let Some(idx) = clamp(i, a.local_folder.len()) {
+                a.focus = ListFocus::LocalFolder;
+                a.local_folder_selected = idx;
+            }
+        });
+    }
+    {
+        let app = app.clone();
+        window.on_select_library_item(move |i| {
+            let mut a = app.lock().unwrap();
+            if let Some(idx) = clamp(i, a.saved_playlist_row_count()) {
+                a.focus = ListFocus::YtLibrary;
+                a.library_selected = idx;
+            }
+        });
+    }
     {
         let app = app.clone();
         window.on_play_result(move |i| {
@@ -227,29 +261,25 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_toggle_pause(move || {
-            let mut a = app.lock().unwrap();
-            a.toggle_pause();
+            app.lock().unwrap().toggle_pause();
         });
     }
     {
         let app = app.clone();
         window.on_next_track(move || {
-            let mut a = app.lock().unwrap();
-            a.next_track();
+            app.lock().unwrap().next_track();
         });
     }
     {
         let app = app.clone();
         window.on_prev_track(move || {
-            let mut a = app.lock().unwrap();
-            a.prev_track();
+            app.lock().unwrap().prev_track();
         });
     }
     {
         let app = app.clone();
         window.on_seek(move |seconds: f32| {
-            let mut a = app.lock().unwrap();
-            a.seek(seconds as f64);
+            app.lock().unwrap().seek(seconds as f64);
         });
     }
     {
@@ -268,7 +298,6 @@ fn bind_callbacks(
     // Volume slider
     {
         let app = app.clone();
-        let last = last_volume_change.clone();
         window.on_set_volume(move |v: f32| {
             let clamped = v.round().clamp(0.0, 100.0) as u8;
             let mut a = app.lock().unwrap();
@@ -278,7 +307,6 @@ fn bind_callbacks(
                 if let Err(e) = crate::config::save(&a.config) {
                     a.status = format!("config write failed: {e}");
                 }
-                *last.lock().unwrap() = Some(Instant::now());
             }
         });
     }
@@ -304,22 +332,19 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_cycle_loop(move || {
-            let mut a = app.lock().unwrap();
-            a.cycle_loop();
+            app.lock().unwrap().cycle_loop();
         });
     }
     {
         let app = app.clone();
         window.on_toggle_shuffle(move || {
-            let mut a = app.lock().unwrap();
-            a.toggle_shuffle();
+            app.lock().unwrap().toggle_shuffle();
         });
     }
     {
         let app = app.clone();
         window.on_toggle_captions(move || {
-            let mut a = app.lock().unwrap();
-            a.toggle_captions();
+            app.lock().unwrap().toggle_captions();
         });
     }
 
@@ -371,8 +396,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_yank_url(move || {
-            let mut a = app.lock().unwrap();
-            a.yank_selected_url();
+            app.lock().unwrap().yank_selected_url();
         });
     }
 
@@ -401,7 +425,17 @@ fn clamp(i: i32, len: usize) -> Option<usize> {
     }
 }
 
-fn push_state(window: &MainWindow, app: &App, last_volume_change: &Arc<Mutex<Option<Instant>>>) {
+fn push_state(
+    window: &MainWindow,
+    app: &App,
+) {
+    let current = app.current_track();
+    let title = match current {
+        Some(t) => format!("{} - {}", t.title, t.uploader),
+        None => "ytmtui".into(),
+    };
+    window.set_current_title(title.into());
+
     // Lists
     window.set_results(rows(&app.results, current_id(app)));
     window.set_tracks(rows(app.active_tracks(), current_id(app)));
@@ -434,7 +468,6 @@ fn push_state(window: &MainWindow, app: &App, last_volume_change: &Arc<Mutex<Opt
 
     // Now playing
     let st = app.player_state();
-    let current = app.current_track();
     window.set_has_current(current.is_some());
     window.set_is_paused(st.paused);
     let (title, uploader) = match current {
@@ -472,22 +505,10 @@ fn push_state(window: &MainWindow, app: &App, last_volume_change: &Arc<Mutex<Opt
     );
     window.set_status_text(app.status.clone().into());
 
-    // Volume popup auto-hide
-    let popup_visible = match *last_volume_change.lock().unwrap() {
-        Some(t) => t.elapsed() < Duration::from_millis(VOLUME_POPUP_MS),
-        None => false,
-    };
-    window.set_show_volume_popup(popup_visible);
-
     // Nerd stats (cheap regardless of overlay visibility)
     let stats = app.stats();
     window.set_ytmtui_version(env!("CARGO_PKG_VERSION").into());
-    window.set_mpv_version(
-        app.mpv_version
-            .clone()
-            .unwrap_or_else(|| "—".into())
-            .into(),
-    );
+    window.set_mpv_version(app.mpv_version.clone().unwrap_or_else(|| "—".into()).into());
     window.set_ytdlp_version(
         app.ytdlp_version
             .clone()
@@ -627,11 +648,7 @@ fn queue_source_label(app: &App) -> String {
         QueueSource::Unsaved => "Unsaved".into(),
         QueueSource::Saved { name } => name.clone(),
         QueueSource::LocalFolder => {
-            let name = app
-                .config
-                .local_folder_label
-                .as_deref()
-                .unwrap_or("folder");
+            let name = app.config.local_folder_label.as_deref().unwrap_or("folder");
             format!("⌂: {}", name)
         }
     }
@@ -688,8 +705,8 @@ fn fmt_secs(s: f64) -> String {
 fn register_fallback_fonts() -> Option<String> {
     #[cfg(target_os = "macos")]
     let candidates: &[&str] = &[
-        "/System/Library/Fonts/PingFang.ttc",          // newer macOS
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",  // older macOS, ships Simplified Chinese
+        "/System/Library/Fonts/PingFang.ttc",         // newer macOS
+        "/System/Library/Fonts/Hiragino Sans GB.ttc", // older macOS, ships Simplified Chinese
         "/Library/Fonts/Arial Unicode.ttf",
         "/System/Library/Fonts/STHeiti Medium.ttc",
         "/System/Library/Fonts/Supplemental/Songti.ttc",
@@ -737,8 +754,7 @@ fn register_fallback_fonts() -> Option<String> {
         // default-font-family to something fontique can actually
         // resolve.
         let family_from_face = read_family_name(&bytes);
-        i_slint_common::sharedfontique::get_collection()
-            .register_fonts(bytes.into(), None);
+        i_slint_common::sharedfontique::get_collection().register_fonts(bytes.into(), None);
         if chosen_family.is_none() {
             chosen_family = family_from_face;
         }
@@ -770,7 +786,5 @@ fn read_family_name(bytes: &[u8]) -> Option<String> {
             .find(|n| n.name_id == target_id && n.is_unicode())
             .and_then(|n| n.to_string())
     };
-    pick(ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-        .or_else(|| pick(ttf_parser::name_id::FAMILY))
+    pick(ttf_parser::name_id::TYPOGRAPHIC_FAMILY).or_else(|| pick(ttf_parser::name_id::FAMILY))
 }
-

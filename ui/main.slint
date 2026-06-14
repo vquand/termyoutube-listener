@@ -3,8 +3,6 @@ import {
     GridBox, GroupBox, ComboBox, Slider, ProgressIndicator, StandardButton
 } from "std-widgets.slint";
 
-// ---------- Structs shared with Rust ----------
-
 export struct TrackRow {
     id: string,
     title: string,
@@ -25,13 +23,12 @@ export struct LibraryRow {
     is-unsaved: bool,
 }
 
-// ---------- Small reusable bits ----------
-
 component IconButton inherits Rectangle {
     in property <string> label;
     in property <bool> primary: false;
+    in property <length> button-width: 0px;
     callback clicked();
-    width: text.preferred-width + 22px;
+    width: button-width > 0px ? button-width : text.preferred-width + 22px;
     height: 28px;
     border-radius: 6px;
     background: ta.has-hover
@@ -76,82 +73,116 @@ component TabButton inherits Rectangle {
 component TrackListRow inherits Rectangle {
     in property <TrackRow> item;
     in property <bool> selected;
+    in property <bool> show-add: false;
+    in property <bool> show-remove: false;
+    in property <bool> show-copy: false;
+    callback select();
     callback play();
     callback add();
+    callback remove();
+    callback copy-url();
     height: 32px;
     border-radius: 4px;
     background: selected
         ? #2c3045
-        : (ta.has-hover ? #1f2030 : transparent);
+        : (content-ta.has-hover ? #1f2030 : transparent);
     animate background { duration: 60ms; }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
-        spacing: 10px;
-        // Playing marker
-        Text {
-            text: item.is-playing ? "▶" : " ";
-            color: #9ece6a;
-            width: 14px;
-            vertical-alignment: center;
-            font-size: 13px;
-        }
-        Text {
-            text: item.duration;
-            color: #6c7393;
-            width: 52px;
-            font-size: 12px;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-        }
-        Text {
-            text: item.platform-glyph;
-            color: #bb9af7;
-            width: 16px;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
-        Text {
-            text: item.depth;
-            color: #565b75;
-            width: item.depth == "" ? 0px : 28px;
-            font-size: 11px;
-            vertical-alignment: center;
-        }
-        Text {
-            text: item.title;
-            color: #c0caf5;
-            font-size: 13px;
-            font-weight: 500;
-            vertical-alignment: center;
-            overflow: elide;
+        spacing: 6px;
+        Rectangle {
             horizontal-stretch: 1;
+            height: parent.height;
+            content-ta := TouchArea {
+                clicked => { root.select(); }
+                double-clicked => { root.play(); }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.item.is-playing ? "▶" : " ";
+                    color: #9ece6a;
+                    width: 14px;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                }
+                Text {
+                    text: root.item.duration;
+                    color: #6c7393;
+                    width: 52px;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                }
+                Text {
+                    text: root.item.platform-glyph;
+                    color: #bb9af7;
+                    width: 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.item.depth;
+                    color: #565b75;
+                    width: 28px;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.item.title;
+                    color: #c0caf5;
+                    font-size: 13px;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.item.uploader;
+                    color: #565b75;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    min-width: 120px;
+                    max-width: 220px;
+                }
+            }
         }
-        Text {
-            text: item.uploader == "" ? "" : "— " + item.uploader;
-            color: #565b75;
-            font-size: 12px;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
+        HorizontalLayout {
+            spacing: 4px;
+            height: 24px;
+            IconButton {
+                label: "▶";
+                button-width: 30px;
+                primary: selected;
+                clicked => { root.play(); }
+            }
+            if root.show-add: IconButton {
+                label: "+";
+                button-width: 30px;
+                clicked => { root.add(); }
+            }
+            if root.show-copy: IconButton {
+                label: "URL";
+                button-width: 42px;
+                clicked => { root.copy-url(); }
+            }
+            if root.show-remove: IconButton {
+                label: "×";
+                button-width: 30px;
+                clicked => { root.remove(); }
+            }
         }
-        IconButton {
-            label: "+";
-            clicked => { root.add(); }
-        }
-    }
-    ta := TouchArea {
-        clicked => { root.play(); }
-        // double-click acts like Enter on selection
-        double-clicked => { root.play(); }
     }
 }
 
 component LibraryListRow inherits Rectangle {
     in property <LibraryRow> item;
     in property <bool> selected;
+    callback select();
     callback activate();
     callback toggle-fav();
     callback remove();
@@ -159,87 +190,201 @@ component LibraryListRow inherits Rectangle {
     border-radius: 4px;
     background: selected
         ? #2c3045
-        : (ta.has-hover ? #1f2030 : transparent);
+        : (content-ta.has-hover ? #1f2030 : transparent);
     animate background { duration: 60ms; }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
-        spacing: 10px;
-        Text {
-            text: item.is-active ? "▶" : " ";
-            color: #9ece6a;
-            width: 14px;
-            vertical-alignment: center;
-            font-size: 13px;
-        }
+        spacing: 6px;
         Rectangle {
-            width: 22px;
-            height: 22px;
-            border-radius: 4px;
-            background: ta-fav.has-hover ? #2a2c3e : transparent;
-            animate background { duration: 60ms; }
-            Text {
-                text: item.is-unsaved ? "" : (item.favorite ? "★" : "☆");
-                color: item.favorite ? #e0af68 : #565b75;
-                font-size: 14px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            ta-fav := TouchArea { clicked => { root.toggle-fav(); } }
-        }
-        Text {
-            text: item.glyph;
-            color: item.is-unsaved ? #e0af68 : #bb9af7;
-            width: 16px;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
-            horizontal-alignment: center;
-        }
-        Text {
-            text: item.title;
-            color: item.is-unsaved ? #e0af68 : #c0caf5;
-            font-size: 13px;
-            font-weight: 600;
-            vertical-alignment: center;
-            overflow: elide;
             horizontal-stretch: 1;
-        }
-        Text {
-            text: item.count-label;
-            color: #565b75;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-        Text {
-            text: item.duration-label;
-            color: #565b75;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-        Rectangle {
-            width: item.is-unsaved ? 0px : 22px;
-            height: 22px;
-            border-radius: 4px;
-            background: ta-rm.has-hover ? #f7768e : transparent;
-            animate background { duration: 60ms; }
-            Text {
-                text: item.is-unsaved ? "" : "×";
-                color: ta-rm.has-hover ? #1a1b26 : #565b75;
-                font-size: 14px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            height: parent.height;
+            content-ta := TouchArea {
+                clicked => { root.select(); }
+                double-clicked => { root.activate(); }
             }
-            ta-rm := TouchArea { clicked => { root.remove(); } }
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.item.is-active ? "▶" : " ";
+                    color: #9ece6a;
+                    width: 14px;
+                    vertical-alignment: center;
+                    font-size: 13px;
+                }
+                Text {
+                    text: root.item.is-unsaved ? " " : (root.item.favorite ? "★" : "☆");
+                    color: root.item.favorite ? #e0af68 : #565b75;
+                    width: 22px;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.item.glyph;
+                    color: root.item.is-unsaved ? #e0af68 : #bb9af7;
+                    width: 16px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.item.title;
+                    color: root.item.is-unsaved ? #e0af68 : #c0caf5;
+                    font-size: 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.item.count-label;
+                    color: #565b75;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    min-width: 90px;
+                    max-width: 120px;
+                }
+                Text {
+                    text: root.item.duration-label;
+                    color: #565b75;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    width: 60px;
+                }
+            }
         }
-    }
-    ta := TouchArea {
-        clicked => { root.activate(); }
-        double-clicked => { root.activate(); }
+        HorizontalLayout {
+            spacing: 4px;
+            height: 24px;
+            IconButton {
+                label: "Open";
+                button-width: 48px;
+                primary: selected;
+                clicked => { root.activate(); }
+            }
+            if !root.item.is-unsaved: IconButton {
+                label: root.item.favorite ? "★" : "☆";
+                button-width: 30px;
+                clicked => { root.toggle-fav(); }
+            }
+            if !root.item.is-unsaved: IconButton {
+                label: "×";
+                button-width: 30px;
+                clicked => { root.remove(); }
+            }
+        }
     }
 }
 
-// ---------- Window ----------
+component SearchBar inherits Rectangle {
+    in-out property <string> search-text;
+    in-out property <string> filter-chip;
+    callback submit-search(string, string);
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 6px;
+        alignment: center;
+
+        if root.filter-chip != "": Text {
+            text: " ";
+            height: 24px;
+            vertical-alignment: center;
+            Rectangle {
+                height: 24px;
+                border-radius: 12px;
+                background: root.filter-chip == "youtube"
+                    ? #e06c75
+                    : (root.filter-chip == "bilibili"
+                        ? #bb9af7
+                        : #9ece6a);
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 4px;
+                    spacing: 4px;
+                    Text {
+                        text: root.filter-chip == "youtube"
+                            ? "YouTube"
+                            : (root.filter-chip == "bilibili"
+                                ? "Bilibili"
+                                : "Local");
+                        color: #0e1018;
+                        font-size: 11px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "  ";
+                        vertical-alignment: center;
+                        width: 20px;
+                        horizontal-alignment: center;
+                        Rectangle {
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            background: #ffffff33;
+                            y: (parent.height - self.height) / 2;
+                            Text {
+                                text: "x";
+                                color: #0e1018;
+                                font-size: 10px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.filter-chip = "";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        text-input := LineEdit {
+            text: root.search-text;
+            font-size: 14px;
+            placeholder-text: root.filter-chip == "youtube"
+                ? "Search YouTube..."
+                : (root.filter-chip == "bilibili"
+                    ? "Search Bilibili..."
+                    : (root.filter-chip == "local"
+                        ? "Search local..."
+                        : "Search YouTube / Bilibili / Local (Y=YT, B=Bili, H=Local)"));
+            horizontal-stretch: 1;
+            accepted => {
+                if (self.text == "y" || self.text == "Y") {
+                    root.filter-chip = "youtube";
+                    self.text = "";
+                } else if (self.text == "b" || self.text == "B") {
+                    root.filter-chip = "bilibili";
+                    self.text = "";
+                } else if (self.text == "h" || self.text == "H") {
+                    root.filter-chip = "local";
+                    self.text = "";
+                } else if (self.text != "") {
+                    let prefix = root.filter-chip == "youtube"
+                        ? "#Y "
+                        : (root.filter-chip == "bilibili"
+                            ? "#B "
+                            : (root.filter-chip == "local"
+                                ? "#H "
+                                : ""));
+                    root.submit-search(self.text, root.filter-chip);
+                    self.text = "";
+                    root.filter-chip = "";
+                }
+            }
+        }
+    }
+}
 
 export component MainWindow inherits Window {
     title: "ytmtui";
@@ -248,14 +393,9 @@ export component MainWindow inherits Window {
     min-width: 820px;
     min-height: 520px;
     background: #1a1b26;
-    // The actual family is chosen at runtime by
-    // gui.rs::register_fallback_fonts (reads the OS's real font name from
-    // the font file's name-table so we don't hardcode a family that
-    // doesn't exist on this Mac).
     in-out property <string> ui-font-family: "";
     default-font-family: ui-font-family;
 
-    // ===== state from Rust =====
     in property <[TrackRow]> results;
     in property <[TrackRow]> tracks;
     in property <[TrackRow]> local-tracks;
@@ -293,9 +433,12 @@ export component MainWindow inherits Window {
     in property <bool> show-help;
     in property <bool> show-params;
     in property <bool> show-nerd;
-    in property <bool> show-volume-popup;
     in-out property <bool> show-save-dialog;
     in-out property <string> save-dialog-default;
+    in-out property <string> search-text: "";
+    in-out property <string> filter-chip: "";
+    in-out property <bool> show-file-dialog: false;
+    in-out property <bool> show-playlist-url-dialog: false;
     in property <string> ytmtui-version;
     in property <string> mpv-version;
     in property <string> ytdlp-version;
@@ -319,11 +462,14 @@ export component MainWindow inherits Window {
     in property <int> local-selected;
     in property <int> library-selected;
 
-    // ===== callbacks to Rust =====
-    callback submit-search(string);
+    callback submit-search(string, string);
     callback open-file(string);
     callback open-playlist-url(string);
     callback save-playlist(string);
+    callback select-result(int);
+    callback select-track(int);
+    callback select-local(int);
+    callback select-library-item(int);
     callback play-result(int);
     callback play-track(int);
     callback play-local(int);
@@ -351,11 +497,9 @@ export component MainWindow inherits Window {
     callback yank-url();
     callback quit();
 
-    // ----- main layout -----
     VerticalLayout {
         spacing: 0px;
 
-        // ── Header: search input + global actions
         Rectangle {
             background: #16171f;
             height: 56px;
@@ -363,50 +507,37 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 padding: 10px;
                 spacing: 8px;
-                search-box := LineEdit {
-                    placeholder-text: "Search YouTube / Bilibili / Local (start with #Y, #B, #H to scope)";
-                    accepted => {
-                        root.submit-search(self.text);
-                        self.text = "";
-                    }
+                SearchBar {
+                    search-text <=> root.search-text;
+                    filter-chip <=> root.filter-chip;
                     horizontal-stretch: 1;
-                }
-                LineEdit {
-                    placeholder-text: "Open file or folder (~/path ok)…";
-                    accepted => {
-                        root.open-file(self.text);
-                        self.text = "";
+                    submit-search(q, chip) => {
+                        root.submit-search(q, chip);
                     }
-                    horizontal-stretch: 1;
-                }
-                LineEdit {
-                    placeholder-text: "YouTube / Bilibili playlist URL";
-                    accepted => {
-                        root.open-playlist-url(self.text);
-                        self.text = "";
-                    }
-                    horizontal-stretch: 1;
                 }
                 IconButton {
-                    label: "Help";
-                    clicked => { root.toggle-help(); }
+                    label: "Open";
+                    button-width: 56px;
+                    clicked => { root.show-file-dialog = !root.show-file-dialog; }
                 }
                 IconButton {
-                    label: "Params";
+                    label: "Playlist";
+                    button-width: 80px;
+                    clicked => { root.show-playlist-url-dialog = !root.show-playlist-url-dialog; }
+                }
+                IconButton {
+                    label: "⚙";
+                    button-width: 34px;
                     clicked => { root.toggle-params(); }
                 }
                 IconButton {
-                    label: "Stats";
-                    clicked => { root.toggle-nerd(); }
-                }
-                IconButton {
-                    label: "Quit";
-                    clicked => { root.quit(); }
+                    label: "?";
+                    button-width: 34px;
+                    clicked => { root.toggle-help(); }
                 }
             }
         }
 
-        // ── Tab bar
         Rectangle {
             background: #1a1b26;
             height: 44px;
@@ -434,33 +565,9 @@ export component MainWindow inherits Window {
                     clicked => { root.set-tab(2); }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                Text {
-                    text: "vol " + root.volume + "%   loop:" + root.loop-mode-label
-                        + (root.shuffle-on ? "  shuffle" : "");
-                    color: #6c7393;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-                IconButton {
-                    label: "↻ loop";
-                    clicked => { root.cycle-loop(); }
-                }
-                IconButton {
-                    label: root.shuffle-on ? "shuf: on" : "shuf: off";
-                    clicked => { root.toggle-shuffle(); }
-                }
-                IconButton {
-                    label: root.show-captions ? "CC: on" : "CC: off";
-                    clicked => { root.toggle-captions(); }
-                }
-                IconButton {
-                    label: "Copy URL";
-                    clicked => { root.yank-url(); }
-                }
             }
         }
 
-        // ── Tab content area
         Rectangle {
             background: #1a1b26;
             vertical-stretch: 1;
@@ -471,18 +578,38 @@ export component MainWindow inherits Window {
                 padding-top: 4px;
                 padding-bottom: 4px;
 
-                // Results tab
                 if root.active-tab == 0: Rectangle {
                     background: #1f2030;
                     border-radius: 8px;
                     VerticalLayout {
                         padding: 6px;
+                        HorizontalLayout {
+                            height: 34px;
+                            spacing: 8px;
+                            Text {
+                                text: root.is-searching
+                                    ? "Search results · loading"
+                                    : "Search results · " + root.results-count + " tracks";
+                                color: #6c7393;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
                         ListView {
                             for r[i] in root.results: TrackListRow {
                                 item: r;
                                 selected: i == root.results-selected;
+                                show-add: true;
+                                show-copy: true;
+                                select => { root.select-result(i); }
                                 play => { root.play-result(i); }
                                 add => { root.add-result-to-playlist(i); }
+                                copy-url => {
+                                    root.select-result(i);
+                                    root.yank-url();
+                                }
                             }
                         }
                         if root.results.length == 0: Text {
@@ -497,26 +624,31 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Library tab — split: saved playlists left, tracks right
                 if root.active-tab == 1: HorizontalLayout {
                     spacing: 8px;
-                    // Saved Playlists pane
                     Rectangle {
                         background: #1f2030;
                         border-radius: 8px;
                         horizontal-stretch: 4;
                         VerticalLayout {
                             padding: 6px;
-                            Text {
-                                text: "Saved Playlists (" + root.library-count + ")";
-                                color: #6c7393;
-                                font-size: 12px;
-                                font-weight: 600;
+                            HorizontalLayout {
+                                height: 34px;
+                                spacing: 8px;
+                                Text {
+                                    text: "Saved Playlists (" + root.library-count + ")";
+                                    color: #6c7393;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
                             }
                             ListView {
                                 for r[i] in root.library-rows: LibraryListRow {
                                     item: r;
                                     selected: i == root.library-selected;
+                                    select => { root.select-library-item(i); }
                                     activate => { root.activate-library-item(i); }
                                     toggle-fav => { root.toggle-favorite(i); }
                                     remove => { root.remove-library-entry(i); }
@@ -530,7 +662,6 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                    // Tracks pane
                     Rectangle {
                         background: #1f2030;
                         border-radius: 8px;
@@ -538,6 +669,8 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             padding: 6px;
                             HorizontalLayout {
+                                height: 34px;
+                                spacing: 8px;
                                 Text {
                                     text: "Tracks · " + root.active-playlist-title
                                         + (root.is-loading-playlist ? " (loading…)"
@@ -545,10 +678,12 @@ export component MainWindow inherits Window {
                                     color: #6c7393;
                                     font-size: 12px;
                                     font-weight: 600;
+                                    vertical-alignment: center;
                                     horizontal-stretch: 1;
                                 }
                                 IconButton {
-                                    label: "Save Unsaved as…";
+                                    label: "Save as…";
+                                    button-width: 86px;
                                     clicked => {
                                         root.save-dialog-default = root.active-playlist-title == "Unsaved"
                                             ? ""
@@ -559,34 +694,43 @@ export component MainWindow inherits Window {
                             }
                             ListView {
                                 for r[i] in root.tracks: TrackListRow {
-                                    item: r;
-                                    selected: i == root.tracks-selected;
-                                    play => { root.play-track(i); }
-                                    add => { root.remove-track(i); }
-                                }
+                                item: r;
+                                selected: i == root.tracks-selected;
+                                show-remove: true;
+                                select => { root.select-track(i); }
+                                play => { root.play-track(i); }
+                                remove => { root.remove-track(i); }
                             }
+                        }
                         }
                     }
                 }
 
-                // Local tab
                 if root.active-tab == 2: Rectangle {
                     background: #1f2030;
                     border-radius: 8px;
                     VerticalLayout {
                         padding: 6px;
-                        Text {
-                            text: root.is-scanning-local
-                                ? "Scanning local folder…"
-                                : (root.local-count + " local files");
-                            color: #6c7393;
-                            font-size: 12px;
-                            font-weight: 600;
+                        HorizontalLayout {
+                            height: 34px;
+                            spacing: 8px;
+                                Text {
+                                    text: root.is-scanning-local
+                                    ? "Local files · scanning"
+                                    : "Local files · " + root.local-count + " tracks";
+                                color: #6c7393;
+                                font-size: 12px;
+                                font-weight: 600;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
                         }
                         ListView {
                             for r[i] in root.local-tracks: TrackListRow {
                                 item: r;
                                 selected: i == root.local-selected;
+                                show-add: true;
+                                select => { root.select-local(i); }
                                 play => { root.play-local(i); }
                                 add => { root.add-local-to-playlist(i); }
                             }
@@ -596,7 +740,6 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ── Captions strip (optional)
         if root.show-captions: Rectangle {
             background: #16171f;
             height: 56px;
@@ -623,17 +766,20 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ── Now Playing card
         Rectangle {
             background: #16171f;
-            height: 96px;
+            height: 110px;
             border-width: 1px;
             border-color: #2a2c3e;
             VerticalLayout {
-                padding: 10px;
-                spacing: 6px;
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
                 HorizontalLayout {
                     spacing: 10px;
+                    height: 42px;
                     Text {
                         text: root.is-paused ? "⏸" : "▶";
                         color: #9ece6a;
@@ -653,7 +799,7 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                     }
                     Text {
-                        text: root.has-current ? "— " + root.current-uploader : "";
+                        text: root.has-current ? " — " + root.current-uploader : "";
                         color: #6c7393;
                         font-size: 12px;
                         vertical-alignment: center;
@@ -666,6 +812,7 @@ export component MainWindow inherits Window {
                         color: #565b75;
                         font-size: 11px;
                         vertical-alignment: center;
+                        overflow: elide;
                     }
                     Text {
                         text: root.position-str + " / " + root.duration-str;
@@ -674,51 +821,39 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                     }
                 }
-                // Progress + transport item
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 8px;
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    height: 48px;
                     IconButton {
                         label: "⏮";
+                        button-width: 36px;
                         clicked => { root.prev-track(); }
                     }
                     IconButton {
-                        label: "−60";
-                        clicked => { root.seek(-60.0); }
-                    }
-                    IconButton {
-                        label: "−10";
-                        clicked => { root.seek(-10.0); }
-                    }
-                    IconButton {
-                        label: root.is-paused ? "▶ Play" : "⏸ Pause";
+                        label: root.is-paused ? "▶" : "⏸";
+                        button-width: 48px;
                         primary: true;
                         clicked => { root.toggle-pause(); }
                     }
                     IconButton {
-                        label: "+10";
-                        clicked => { root.seek(10.0); }
-                    }
-                    IconButton {
-                        label: "+60";
-                        clicked => { root.seek(60.0); }
-                    }
-                    IconButton {
                         label: "⏭";
+                        button-width: 36px;
                         clicked => { root.next-track(); }
                     }
-                    // Progress bar (clickable)
                     Rectangle {
                         horizontal-stretch: 1;
-                        height: 28px;
-                        background: #1f2030;
-                        border-radius: 4px;
+                        height: 20px;
+                        background: #2a2c3e;
+                        border-radius: 10px;
                         Rectangle {
                             x: 0;
                             y: 0;
                             height: parent.height;
                             width: parent.width * root.playback-ratio;
                             background: #7aa2f7;
-                            border-radius: 4px;
+                            border-radius: 10px;
                         }
                         TouchArea {
                             clicked => {
@@ -727,42 +862,40 @@ export component MainWindow inherits Window {
                         }
                     }
                     Text {
-                        text: root.device-name;
+                        text: root.volume + "%";
                         color: #6c7393;
                         font-size: 11px;
                         vertical-alignment: center;
+                        width: 36px;
                     }
-                    // Volume slider (compact)
-                    Rectangle {
-                        width: 110px;
-                        height: 28px;
-                        background: #1f2030;
-                        border-radius: 4px;
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            Text {
-                                text: "vol";
-                                color: #6c7393;
-                                font-size: 11px;
-                                vertical-alignment: center;
-                                width: 22px;
-                            }
-                            Slider {
-                                minimum: 0;
-                                maximum: 100;
-                                value: root.volume;
-                                changed(v) => {
-                                    root.set-volume(v);
-                                }
-                            }
+                    Slider {
+                        minimum: 0;
+                        maximum: 100;
+                        value: root.volume;
+                        width: 90px;
+                        changed(v) => {
+                            root.set-volume(v);
                         }
+                    }
+                    IconButton {
+                        label: "Loop: " + root.loop-mode-label;
+                        button-width: 78px;
+                        clicked => { root.cycle-loop(); }
+                    }
+                    IconButton {
+                        label: root.shuffle-on ? "Shuffle on" : "Shuffle";
+                        button-width: 78px;
+                        clicked => { root.toggle-shuffle(); }
+                    }
+                    IconButton {
+                        label: root.show-captions ? "CC on" : "CC";
+                        button-width: 50px;
+                        clicked => { root.toggle-captions(); }
                     }
                 }
             }
         }
 
-        // ── Status bar
         Rectangle {
             background: #16171f;
             height: 22px;
@@ -779,8 +912,6 @@ export component MainWindow inherits Window {
             }
         }
     }
-
-    // ===== Overlays =====
 
     if root.show-help: Rectangle {
         background: #00000080;
@@ -824,7 +955,7 @@ export component MainWindow inherits Window {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "Click any track item to play. Click + to add to the Unsaved playlist. Click × on a saved playlist item to delete it.";
+                    text: "Single-click a row to select it. Double-click a track to play it or a playlist to open it. Row actions appear on the right and change by list.";
                     color: #6c7393;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -854,7 +985,7 @@ export component MainWindow inherits Window {
         }
         Rectangle {
             width: 480px;
-            height: 280px;
+            height: 320px;
             background: #1f2030;
             border-radius: 10px;
             border-width: 1px;
@@ -870,7 +1001,6 @@ export component MainWindow inherits Window {
                     font-size: 16px;
                     font-weight: 700;
                 }
-                // Progress cursor item
                 HorizontalLayout {
                     spacing: 10px;
                     Text {
@@ -904,7 +1034,6 @@ export component MainWindow inherits Window {
                         width: 50px;
                     }
                 }
-                // Caption language item
                 HorizontalLayout {
                     spacing: 10px;
                     Text {
@@ -936,6 +1065,24 @@ export component MainWindow inherits Window {
                         font-size: 11px;
                         vertical-alignment: center;
                         width: 50px;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: "Show Stats";
+                        color: #6c7393;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        width: 140px;
+                    }
+                    IconButton {
+                        label: "Nerd stats";
+                        primary: true;
+                        clicked => {
+                            root.toggle-nerd();
+                            root.toggle-params();
+                        }
                     }
                 }
                 Rectangle { vertical-stretch: 1; }
@@ -999,6 +1146,122 @@ export component MainWindow inherits Window {
         }
     }
 
+    if root.show-file-dialog: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.show-file-dialog = false; }
+        }
+        Rectangle {
+            width: 500px;
+            height: 200px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                Text {
+                    text: "Open File or Folder";
+                    color: #c0caf5;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Enter a file path or folder path (~ ok). Folders are scanned up to 4 levels deep.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                file-input := LineEdit {
+                    placeholder-text: "/path/to/file or ~/folder";
+                    accepted => {
+                        root.open-file(self.text);
+                        root.show-file-dialog = false;
+                        self.text = "";
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    IconButton {
+                        label: "Cancel";
+                        clicked => { root.show-file-dialog = false; }
+                    }
+                    IconButton {
+                        label: "Open";
+                        primary: true;
+                        clicked => {
+                            root.open-file(file-input.text);
+                            root.show-file-dialog = false;
+                            file-input.text = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.show-playlist-url-dialog: Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.show-playlist-url-dialog = false; }
+        }
+        Rectangle {
+            width: 500px;
+            height: 200px;
+            background: #1f2030;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3c52;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                Text {
+                    text: "Load Playlist";
+                    color: #c0caf5;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "Paste a YouTube or Bilibili playlist URL.";
+                    color: #6c7393;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                url-input := LineEdit {
+                    placeholder-text: "https://...";
+                    accepted => {
+                        root.open-playlist-url(self.text);
+                        root.show-playlist-url-dialog = false;
+                        self.text = "";
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    IconButton {
+                        label: "Cancel";
+                        clicked => { root.show-playlist-url-dialog = false; }
+                    }
+                    IconButton {
+                        label: "Load";
+                        primary: true;
+                        clicked => {
+                            root.open-playlist-url(url-input.text);
+                            root.show-playlist-url-dialog = false;
+                            url-input.text = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if root.show-save-dialog: Rectangle {
         background: #00000080;
         TouchArea {
@@ -1054,43 +1317,6 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    if root.show-volume-popup: Rectangle {
-        width: 240px;
-        height: 48px;
-        x: parent.width - self.width - 24px;
-        y: parent.height - self.height - 130px;
-        background: #1f2030;
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: #3a3c52;
-        HorizontalLayout {
-            padding: 8px;
-            spacing: 8px;
-            Text {
-                text: "vol " + root.volume + "%";
-                color: #c0caf5;
-                font-size: 13px;
-                font-weight: 600;
-                vertical-alignment: center;
-                width: 70px;
-            }
-            Rectangle {
-                horizontal-stretch: 1;
-                height: 12px;
-                background: #2a2c3e;
-                border-radius: 6px;
-                y: (parent.height - self.height) / 2;
-                Rectangle {
-                    x: 0; y: 0;
-                    width: parent.width * root.volume / 100;
-                    height: parent.height;
-                    background: #7aa2f7;
-                    border-radius: 6px;
                 }
             }
         }

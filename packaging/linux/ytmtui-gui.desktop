@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=ytmtui
+GenericName=YouTube Music Player
+Comment=Search and play YouTube, Bilibili, playlist, and local audio with mpv
+Exec=ytmtui-gui
+Icon=ytmtui
+Terminal=false
+Categories=AudioVideo;Audio;Music;Player;
+Keywords=youtube;music;audio;mpv;yt-dlp;bilibili;
+StartupNotify=true
+StartupWMClass=ytmtui-gui

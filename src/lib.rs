@@ -6,6 +6,7 @@ pub mod config;
 pub mod gui;
 pub mod library;
 pub mod local_scan;
+pub mod mpris;
 pub mod player;
 pub mod playlist;
 pub mod probe;

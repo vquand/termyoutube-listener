@@ -6080,6 +6080,7 @@ dependencies = [
  "slint",
  "slint-build",
  "sysinfo",
+ "zbus",
 ]
 
 [[package]]
