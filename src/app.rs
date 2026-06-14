@@ -562,6 +562,7 @@ pub struct App {
     pub status: String,
     pub searching: bool,
     pub should_quit: bool,
+    mpv_disconnect_reported: bool,
     pub player: Player,
     pub events_rx: Receiver<SearchEvent>,
     events_tx: Sender<SearchEvent>,
@@ -630,6 +631,7 @@ impl App {
             status: "Press `s` to search, `?` for help, `q` to quit.".into(),
             searching: false,
             should_quit: false,
+            mpv_disconnect_reported: false,
             player,
             events_rx: rx,
             events_tx: tx,
@@ -1644,7 +1646,12 @@ impl App {
         }
         // auto-advance on track end
         let st = self.player.state();
-        if st.eof_reached && self.current.is_some() {
+        if st.disconnected {
+            if !self.mpv_disconnect_reported {
+                self.status = "mpv connection lost - restart ytmtui".into();
+                self.mpv_disconnect_reported = true;
+            }
+        } else if st.eof_reached && self.current.is_some() {
             self.advance_after_eof();
         }
     }

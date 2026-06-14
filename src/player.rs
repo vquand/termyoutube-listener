@@ -31,6 +31,7 @@ pub struct PlayerState {
     pub duration: f64,
     pub idle: bool,
     pub eof_reached: bool,
+    pub disconnected: bool,
     pub audio_codec: Option<String>,
     pub audio_bitrate: Option<f64>,
     pub samplerate: Option<u32>,
@@ -196,6 +197,8 @@ impl Player {
                     }
                 }
             }
+            let mut s = state_for_reader.lock().unwrap();
+            s.disconnected = true;
         });
 
         let player = Player {
