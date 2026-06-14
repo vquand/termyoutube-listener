@@ -330,10 +330,72 @@ fn platform_short(p: ytdlp::Platform) -> &'static str {
 }
 
 fn short_label(entry: &crate::library::PlaylistEntry) -> String {
-    if entry.title.len() > 60 {
-        format!("{}…", &entry.title[..60])
+    // Truncate by char count, not bytes: byte slicing ([..60]) panics when
+    // the boundary lands inside a multibyte UTF-8 sequence (Vietnamese
+    // diacritics, CJK, emoji).
+    let mut chars = entry.title.chars();
+    let head: String = chars.by_ref().take(60).collect();
+    if chars.next().is_some() {
+        format!("{}…", head)
     } else {
-        entry.title.clone()
+        head
+    }
+}
+
+#[cfg(test)]
+mod short_label_tests {
+    use super::short_label;
+    use crate::library::PlaylistEntry;
+    use crate::ytdlp::Platform;
+
+    fn entry(title: &str) -> PlaylistEntry {
+        PlaylistEntry {
+            url: String::new(),
+            title: title.to_string(),
+            platform: Platform::Local,
+            favorite: false,
+            track_count: 0,
+            tracks: None,
+            total_duration: None,
+        }
+    }
+
+    #[test]
+    fn short_title_unchanged() {
+        assert_eq!(short_label(&entry("short")), "short");
+    }
+
+    #[test]
+    fn exactly_60_chars_no_ellipsis() {
+        let t: String = "a".repeat(60);
+        assert_eq!(short_label(&entry(&t)), t);
+    }
+
+    #[test]
+    fn long_ascii_truncates_to_60_plus_ellipsis() {
+        let t: String = "a".repeat(80);
+        let out = short_label(&entry(&t));
+        assert_eq!(out.chars().count(), 61);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn vietnamese_multibyte_does_not_panic() {
+        // Regression guard: each char is 2+ bytes, so the old byte slice
+        // ([..60]) landed mid-codepoint and panicked. Must truncate by chars.
+        let t = "Đ".repeat(80);
+        let out = short_label(&entry(&t));
+        assert_eq!(out.chars().count(), 61);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn vietnamese_long_title_realistic() {
+        let t = "Playlist nhạc Việt Nam siêu dài và hay không thể lọt danh sách";
+        let out = short_label(&entry(t));
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 61);
+        assert!(!out.is_empty());
     }
 }
 
