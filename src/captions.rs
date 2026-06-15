@@ -170,7 +170,15 @@ fn has_vtt_track(value: &Value) -> bool {
 }
 
 fn infer_lang_from_text(text: &str) -> Option<&'static str> {
-    if text.chars().any(|ch| matches!(ch, 'À'..='ỹ')) {
+    // Vietnamese tone marks live in Latin Extended Additional
+    // (U+1E00..U+1EFF) plus the horn vowels Ơ/ơ/Ư/ư. The old broad
+    // range also matched Latin-1, misdetecting French/Spanish/German.
+    if text.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{1E00}'..='\u{1EFF}' | '\u{01A0}' | '\u{01A1}' | '\u{01AF}' | '\u{01B0}'
+        )
+    }) {
         return Some("vi");
     }
     if text
@@ -493,6 +501,24 @@ mod tests {
             infer_lang_from_text("Đen - một triệu like ft. Thành Đồng"),
             Some("vi")
         );
+    }
+
+    #[test]
+    fn does_not_mistake_french_diacritics_for_vietnamese() {
+        assert_eq!(infer_lang_from_text("Été à Paris"), None);
+        assert_eq!(infer_lang_from_text("C'est déjà fini"), None);
+    }
+
+    #[test]
+    fn does_not_mistake_spanish_for_vietnamese() {
+        assert_eq!(infer_lang_from_text("El niño está aquí"), None);
+        assert_eq!(infer_lang_from_text("Canción de lluvia"), None);
+    }
+
+    #[test]
+    fn does_not_mistake_german_diacritics_for_vietnamese() {
+        assert_eq!(infer_lang_from_text("Über die Schönheit"), None);
+        assert_eq!(infer_lang_from_text("Gefährliche Straße"), None);
     }
 
     #[test]
