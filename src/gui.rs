@@ -26,14 +26,14 @@ pub fn run(app: App) -> anyhow::Result<()> {
     }
 
     bind_callbacks(&window, &app);
-    push_state(&window, &app.lock().unwrap());
+    push_state(&window, &app.lock().unwrap_or_else(|e| e.into_inner()));
 
     let timer = Timer::default();
     {
         let app = app.clone();
         let weak = window.as_weak();
         timer.start(TimerMode::Repeated, TICK, move || {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if a.should_quit {
                 return;
             }
@@ -53,7 +53,7 @@ pub fn run(app: App) -> anyhow::Result<()> {
 
     window.run()?;
 
-    app.lock().unwrap().player.shutdown();
+    app.lock().unwrap_or_else(|e| e.into_inner()).player.shutdown();
     Ok(())
 }
 
@@ -71,7 +71,7 @@ fn bind_callbacks(
                 "local" => "#H ",
                 _ => "",
             };
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             let full = format!("{}{}", prefix, q);
             if q.trim().is_empty() { return; }
             a.query = full;
@@ -83,7 +83,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_open_file(move |q| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if q.trim().is_empty() { return; }
             a.query = q.to_string();
             a.submit_open_file();
@@ -99,7 +99,7 @@ fn bind_callbacks(
                 .set_title("Select a folder to scan")
                 .pick_folder();
             let Some(path) = picked else { return };
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             a.query = path.to_string_lossy().to_string();
             a.submit_open_file();
         });
@@ -109,7 +109,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_open_playlist_url(move |q| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if q.trim().is_empty() { return; }
             a.query = q.to_string();
             a.submit_yt_playlist();
@@ -122,7 +122,7 @@ fn bind_callbacks(
         window.on_save_playlist(move |name| {
             let trimmed = name.trim();
             if trimmed.is_empty() { return; }
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             a.focus = ListFocus::YtLibrary;
             if a.playlist.is_empty() {
                 a.status = "nothing to save - Unsaved is empty".into();
@@ -137,7 +137,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_select_result(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.results.len()) {
                 a.focus = ListFocus::Results;
                 a.selected = idx;
@@ -147,7 +147,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_select_track(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.active_tracks().len()) {
                 a.focus = ListFocus::YtPlaylist;
                 a.yt_playlist_selected = idx;
@@ -157,7 +157,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_select_local(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.local_folder.len()) {
                 a.focus = ListFocus::LocalFolder;
                 a.local_folder_selected = idx;
@@ -167,7 +167,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_select_library_item(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.saved_playlist_row_count()) {
                 a.focus = ListFocus::YtLibrary;
                 a.library_selected = idx;
@@ -177,7 +177,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_play_result(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.results.len()) {
                 a.focus = ListFocus::Results;
                 a.selected = idx;
@@ -188,7 +188,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_play_track(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.active_tracks().len()) {
                 a.focus = ListFocus::YtPlaylist;
                 a.yt_playlist_selected = idx;
@@ -199,7 +199,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_play_local(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.local_folder.len()) {
                 a.focus = ListFocus::LocalFolder;
                 a.local_folder_selected = idx;
@@ -212,7 +212,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_add_result_to_playlist(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.results.len()) {
                 a.focus = ListFocus::Results;
                 a.selected = idx;
@@ -223,7 +223,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_add_local_to_playlist(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.local_folder.len()) {
                 a.focus = ListFocus::LocalFolder;
                 a.local_folder_selected = idx;
@@ -234,7 +234,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_remove_track(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.active_tracks().len()) {
                 a.focus = ListFocus::YtPlaylist;
                 a.yt_playlist_selected = idx;
@@ -247,7 +247,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_activate_library_item(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.saved_playlist_row_count()) {
                 a.focus = ListFocus::YtLibrary;
                 a.library_selected = idx;
@@ -258,7 +258,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_toggle_favorite(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.saved_playlist_row_count()) {
                 a.focus = ListFocus::YtLibrary;
                 a.library_selected = idx;
@@ -269,7 +269,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_remove_library_entry(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(idx) = clamp(i, a.saved_playlist_row_count()) {
                 a.focus = ListFocus::YtLibrary;
                 a.library_selected = idx;
@@ -282,31 +282,31 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_toggle_pause(move || {
-            app.lock().unwrap().toggle_pause();
+            app.lock().unwrap_or_else(|e| e.into_inner()).toggle_pause();
         });
     }
     {
         let app = app.clone();
         window.on_next_track(move || {
-            app.lock().unwrap().next_track();
+            app.lock().unwrap_or_else(|e| e.into_inner()).next_track();
         });
     }
     {
         let app = app.clone();
         window.on_prev_track(move || {
-            app.lock().unwrap().prev_track();
+            app.lock().unwrap_or_else(|e| e.into_inner()).prev_track();
         });
     }
     {
         let app = app.clone();
         window.on_seek(move |seconds: f32| {
-            app.lock().unwrap().seek(seconds as f64);
+            app.lock().unwrap_or_else(|e| e.into_inner()).seek(seconds as f64);
         });
     }
     {
         let app = app.clone();
         window.on_seek_absolute(move |ratio: f32| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             let ratio = (ratio as f64).clamp(0.0, 1.0);
             let st = a.player_state();
             if st.duration > 0.0 {
@@ -321,7 +321,7 @@ fn bind_callbacks(
         let app = app.clone();
         window.on_set_volume(move |v: f32| {
             let clamped = v.round().clamp(0.0, 100.0) as u8;
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             if a.config.volume != clamped {
                 a.config.volume = clamped;
                 let _ = a.player.set_volume(clamped);
@@ -337,7 +337,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_set_tab(move |i| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             a.focus = match i {
                 0 => ListFocus::Results,
                 1 => match a.focus {
@@ -353,19 +353,19 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_cycle_loop(move || {
-            app.lock().unwrap().cycle_loop();
+            app.lock().unwrap_or_else(|e| e.into_inner()).cycle_loop();
         });
     }
     {
         let app = app.clone();
         window.on_toggle_shuffle(move || {
-            app.lock().unwrap().toggle_shuffle();
+            app.lock().unwrap_or_else(|e| e.into_inner()).toggle_shuffle();
         });
     }
     {
         let app = app.clone();
         window.on_toggle_captions(move || {
-            app.lock().unwrap().toggle_captions();
+            app.lock().unwrap_or_else(|e| e.into_inner()).toggle_captions();
         });
     }
 
@@ -399,7 +399,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_cycle_sprite(move |delta| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             a.params_row = 0;
             a.params_change(delta);
         });
@@ -407,7 +407,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_cycle_caption_lang(move |delta| {
-            let mut a = app.lock().unwrap();
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
             a.params_row = 1;
             a.params_change(delta);
         });
@@ -417,7 +417,7 @@ fn bind_callbacks(
     {
         let app = app.clone();
         window.on_yank_url(move || {
-            app.lock().unwrap().yank_selected_url();
+            app.lock().unwrap_or_else(|e| e.into_inner()).yank_selected_url();
         });
     }
 
@@ -426,7 +426,7 @@ fn bind_callbacks(
         let app = app.clone();
         let weak = window.as_weak();
         window.on_quit(move || {
-            app.lock().unwrap().should_quit = true;
+            app.lock().unwrap_or_else(|e| e.into_inner()).should_quit = true;
             if let Some(w) = weak.upgrade() {
                 let _ = w.hide();
             }

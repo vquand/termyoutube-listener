@@ -271,7 +271,7 @@ mod linux {
         }
 
         fn read_app<T>(&self, f: impl FnOnce(&App) -> T) -> T {
-            let app = self.app.lock().unwrap();
+            let app = self.app.lock().unwrap_or_else(|e| e.into_inner());
             f(&app)
         }
     }
@@ -312,7 +312,7 @@ mod linux {
     }
 
     fn changed_properties(app: &Arc<Mutex<App>>) -> HashMap<&'static str, Value<'static>> {
-        let app = app.lock().unwrap();
+        let app = app.lock().unwrap_or_else(|e| e.into_inner());
         let mut changed = HashMap::new();
         changed.insert("PlaybackStatus", playback_status_from(&app).into());
         changed.insert("LoopStatus", loop_status_from(&app).into());

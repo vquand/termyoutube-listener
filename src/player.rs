@@ -131,7 +131,7 @@ impl Player {
                     continue;
                 };
                 if let Some(event) = val.get("event").and_then(|e| e.as_str()) {
-                    let mut s = state_for_reader.lock().unwrap();
+                    let mut s = state_for_reader.lock().unwrap_or_else(|e| e.into_inner());
                     match event {
                         "property-change" => {
                             let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -197,7 +197,7 @@ impl Player {
                     }
                 }
             }
-            let mut s = state_for_reader.lock().unwrap();
+            let mut s = state_for_reader.lock().unwrap_or_else(|e| e.into_inner());
             s.disconnected = true;
         });
 
@@ -221,7 +221,7 @@ impl Player {
     }
 
     fn send(&self, payload: &Value) -> Result<()> {
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
         let mut bytes = serde_json::to_vec(payload)?;
         bytes.push(b'\n');
         w.write_all(&bytes)?;
@@ -240,7 +240,7 @@ impl Player {
     pub fn load(&self, url: &str) -> Result<()> {
         // reset perceived duration immediately
         {
-            let mut s = self.state.lock().unwrap();
+            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
             s.duration = 0.0;
             s.position = 0.0;
             s.eof_reached = false;
@@ -275,7 +275,7 @@ impl Player {
     }
 
     pub fn state(&self) -> PlayerState {
-        self.state.lock().unwrap().clone()
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn pid(&self) -> u32 {
