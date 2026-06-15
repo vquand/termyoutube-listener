@@ -9,10 +9,12 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Stdout};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use ytmtui::app::{self, App, Mode};
 use ytmtui::config;
 use ytmtui::library;
+use ytmtui::mpris;
 use ytmtui::player::{self, Player};
 use ytmtui::playlist;
 use ytmtui::sprites;
@@ -36,10 +38,12 @@ fn main() -> Result<()> {
     let yt_pl = playlist::load_yt();
     let local_pl = playlist::load_local();
     let library = library::load();
-    let mut app = App::new(player, cfg, registry, pl, yt_pl, local_pl, library);
+    let app = App::new(player, cfg, registry, pl, yt_pl, local_pl, library);
+    let app = Arc::new(Mutex::new(app));
+    mpris::spawn(app.clone());
 
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, &mut app);
+    let res = run(&mut terminal, &app);
     restore_terminal(&mut terminal)?;
     res
 }
@@ -69,23 +73,35 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
     Ok(())
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
+fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &Arc<Mutex<App>>) -> Result<()> {
     let tick = Duration::from_millis(200);
     let mut last_tick = Instant::now();
 
-    while !app.should_quit {
-        app.drain_events();
-        app.refresh_stats();
-        terminal.draw(|f| ui::draw(f, app))?;
+    loop {
+        {
+            let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
+            if a.should_quit {
+                break;
+            }
+            a.drain_events();
+            a.refresh_stats();
+        }
+
+        terminal.draw(|f| {
+            let a = app.lock().unwrap_or_else(|e| e.into_inner());
+            ui::draw(f, &*a)
+        })?;
 
         let timeout = tick.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_key(app, key.code, key.modifiers);
+                    let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
+                    handle_key(&mut *a, key.code, key.modifiers);
                 }
                 Event::Paste(text) => {
-                    app.handle_paste(&text);
+                    let mut a = app.lock().unwrap_or_else(|e| e.into_inner());
+                    a.handle_paste(&text);
                 }
                 _ => {}
             }
