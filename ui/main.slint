@@ -85,8 +85,12 @@ component TrackListRow inherits Rectangle {
     border-radius: 4px;
     background: selected
         ? #2c3045
-        : (content-ta.has-hover ? #1f2030 : transparent);
+        : (ta.has-hover ? #1f2030 : transparent);
     animate background { duration: 60ms; }
+    ta := TouchArea {
+        clicked => { root.select(); }
+        double-clicked => { root.play(); }
+    }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -94,10 +98,6 @@ component TrackListRow inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             height: parent.height;
-            content-ta := TouchArea {
-                clicked => { root.select(); }
-                double-clicked => { root.play(); }
-            }
             HorizontalLayout {
                 spacing: 6px;
                 Text {
@@ -190,8 +190,12 @@ component LibraryListRow inherits Rectangle {
     border-radius: 4px;
     background: selected
         ? #2c3045
-        : (content-ta.has-hover ? #1f2030 : transparent);
+        : (ta.has-hover ? #1f2030 : transparent);
     animate background { duration: 60ms; }
+    ta := TouchArea {
+        clicked => { root.select(); }
+        double-clicked => { root.activate(); }
+    }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -199,10 +203,6 @@ component LibraryListRow inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             height: parent.height;
-            content-ta := TouchArea {
-                clicked => { root.select(); }
-                double-clicked => { root.activate(); }
-            }
             HorizontalLayout {
                 spacing: 6px;
                 Text {
