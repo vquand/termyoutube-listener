@@ -1513,6 +1513,10 @@ impl App {
                     }
                     if self.pending_searches == 0 {
                         self.searching = false;
+                        // Sort deterministically by title so the order
+                        // doesn't depend on which search thread finishes
+                        // first (parallel YT / Bili queries).
+                        self.results.sort_by(|a, b| a.title.cmp(&b.title));
                         self.status =
                             format!("Found {} results for \"{}\".", self.results.len(), q);
                     }
