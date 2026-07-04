@@ -76,21 +76,13 @@ component TrackListRow inherits Rectangle {
     in property <bool> show-add: false;
     in property <bool> show-remove: false;
     in property <bool> show-copy: false;
-    callback select();
     callback play();
     callback add();
     callback remove();
     callback copy-url();
     height: 32px;
     border-radius: 4px;
-    background: selected
-        ? #2c3045
-        : (ta.has-hover ? #1f2030 : transparent);
-    animate background { duration: 60ms; }
-    ta := TouchArea {
-        clicked => { root.select(); }
-        double-clicked => { root.play(); }
-    }
+    background: transparent;
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -182,20 +174,12 @@ component TrackListRow inherits Rectangle {
 component LibraryListRow inherits Rectangle {
     in property <LibraryRow> item;
     in property <bool> selected;
-    callback select();
     callback activate();
     callback toggle-fav();
     callback remove();
     height: 34px;
     border-radius: 4px;
-    background: selected
-        ? #2c3045
-        : (ta.has-hover ? #1f2030 : transparent);
-    animate background { duration: 60ms; }
-    ta := TouchArea {
-        clicked => { root.select(); }
-        double-clicked => { root.activate(); }
-    }
+    background: transparent;
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -418,6 +402,7 @@ export component MainWindow inherits Window {
     in property <string> position-str;
     in property <string> duration-str;
     in property <float> playback-ratio;
+    in property <string> progress-line;
     in property <bool> is-paused;
     in property <bool> has-current;
 
@@ -599,17 +584,28 @@ export component MainWindow inherits Window {
                             }
                         }
                         ListView {
-                            for r[i] in root.results: TrackListRow {
-                                item: r;
-                                selected: i == root.results-selected;
-                                show-add: true;
-                                show-copy: true;
-                                select => { root.select-result(i); }
-                                play => { root.play-result(i); }
-                                add => { root.add-result-to-playlist(i); }
-                                copy-url => {
-                                    root.select-result(i);
-                                    root.yank-url();
+                            for r[i] in root.results: Rectangle {
+                                height: 32px;
+                                border-radius: 4px;
+                                background: i == root.results-selected
+                                    ? #2c3045
+                                    : (results-ta.has-hover ? #1f2030 : transparent);
+                                animate background { duration: 60ms; }
+                                results-ta := TouchArea {
+                                    clicked => { root.select-result(i); }
+                                    double-clicked => { root.play-result(i); }
+                                }
+                                TrackListRow {
+                                    item: r;
+                                    selected: i == root.results-selected;
+                                    show-add: true;
+                                    show-copy: true;
+                                    play => { root.play-result(i); }
+                                    add => { root.add-result-to-playlist(i); }
+                                    copy-url => {
+                                        root.select-result(i);
+                                        root.yank-url();
+                                    }
                                 }
                             }
                         }
@@ -646,14 +642,25 @@ export component MainWindow inherits Window {
                                 }
                             }
                             ListView {
-                                for r[i] in root.library-rows: LibraryListRow {
+                            for r[i] in root.library-rows: Rectangle {
+                                height: 34px;
+                                border-radius: 4px;
+                                background: i == root.library-selected
+                                    ? #2c3045
+                                    : (library-ta.has-hover ? #1f2030 : transparent);
+                                animate background { duration: 60ms; }
+                                library-ta := TouchArea {
+                                    clicked => { root.select-library-item(i); }
+                                    double-clicked => { root.activate-library-item(i); }
+                                }
+                                LibraryListRow {
                                     item: r;
                                     selected: i == root.library-selected;
-                                    select => { root.select-library-item(i); }
                                     activate => { root.activate-library-item(i); }
                                     toggle-fav => { root.toggle-favorite(i); }
                                     remove => { root.remove-library-entry(i); }
                                 }
+                            }
                             }
                             if root.library-rows.length == 0: Text {
                                 text: "Empty. Paste a YT/Bilibili playlist URL above, or play a track to seed Unsaved.";
@@ -694,13 +701,24 @@ export component MainWindow inherits Window {
                                 }
                             }
                             ListView {
-                                for r[i] in root.tracks: TrackListRow {
-                                item: r;
-                                selected: i == root.tracks-selected;
-                                show-remove: true;
-                                select => { root.select-track(i); }
-                                play => { root.play-track(i); }
-                                remove => { root.remove-track(i); }
+                                for r[i] in root.tracks: Rectangle {
+                                height: 32px;
+                                border-radius: 4px;
+                                background: i == root.tracks-selected
+                                    ? #2c3045
+                                    : (tracks-ta.has-hover ? #1f2030 : transparent);
+                                animate background { duration: 60ms; }
+                                tracks-ta := TouchArea {
+                                    clicked => { root.select-track(i); }
+                                    double-clicked => { root.play-track(i); }
+                                }
+                                TrackListRow {
+                                    item: r;
+                                    selected: i == root.tracks-selected;
+                                    show-remove: true;
+                                    play => { root.play-track(i); }
+                                    remove => { root.remove-track(i); }
+                                }
                             }
                         }
                         }
@@ -727,20 +745,30 @@ export component MainWindow inherits Window {
                                 }
                         }
                         ListView {
-                            for r[i] in root.local-tracks: TrackListRow {
-                                item: r;
-                                selected: i == root.local-selected;
-                                show-add: true;
-                                select => { root.select-local(i); }
-                                play => { root.play-local(i); }
-                                add => { root.add-local-to-playlist(i); }
+                            for r[i] in root.local-tracks: Rectangle {
+                                height: 32px;
+                                border-radius: 4px;
+                                background: i == root.local-selected
+                                    ? #2c3045
+                                    : (local-ta.has-hover ? #1f2030 : transparent);
+                                animate background { duration: 60ms; }
+                                local-ta := TouchArea {
+                                    clicked => { root.select-local(i); }
+                                    double-clicked => { root.play-local(i); }
+                                }
+                                TrackListRow {
+                                    item: r;
+                                    selected: i == root.local-selected;
+                                    show-add: true;
+                                    play => { root.play-local(i); }
+                                    add => { root.add-local-to-playlist(i); }
+                                }
                             }
                         }
                     }
                 }
             }
         }
-
         if root.show-captions: Rectangle {
             background: #16171f;
             height: 56px;
@@ -846,15 +874,27 @@ export component MainWindow inherits Window {
                     Rectangle {
                         horizontal-stretch: 1;
                         height: 20px;
-                        background: #2a2c3e;
+                        background: #242637;
                         border-radius: 10px;
                         Rectangle {
                             x: 0;
                             y: 0;
                             height: parent.height;
                             width: parent.width * root.playback-ratio;
-                            background: #7aa2f7;
+                            background: #3b4261;
                             border-radius: 10px;
+                        }
+                        Text {
+                            text: root.progress-line;
+                            color: #c0caf5;
+                            font-family: "monospace";
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            width: parent.width;
+                            height: parent.height;
                         }
                         TouchArea {
                             clicked => {
