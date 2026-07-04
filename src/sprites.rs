@@ -43,6 +43,72 @@ impl Sprite {
     }
 }
 
+pub fn progress_line(sprite: &Sprite, ratio: f64, width: usize) -> String {
+    let tick = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_millis() / 250) as usize)
+        .unwrap_or(0);
+    progress_line_for_tick(sprite, ratio, width, tick)
+}
+
+fn progress_line_for_tick(sprite: &Sprite, ratio: f64, width: usize, tick: usize) -> String {
+    let ratio = ratio.clamp(0.0, 1.0);
+    let max_frame_width = sprite
+        .frames
+        .iter()
+        .map(|f| f.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    if width < max_frame_width + 2 {
+        return sprite.frame(0).to_string();
+    }
+
+    let track_width = width - max_frame_width;
+    let cursor_position = ((ratio * track_width as f64).round() as usize).min(track_width);
+    let frame_index = match sprite.animate_on {
+        AnimateOn::Move => cursor_position % sprite.frame_count(),
+        AnimateOn::Tick => tick % sprite.frame_count(),
+    };
+    let cursor = sprite.frame(frame_index);
+    let cursor_width = cursor.chars().count();
+    let lead_width = width
+        .saturating_sub(cursor_position)
+        .saturating_sub(cursor_width);
+
+    format!(
+        "{}{}{}",
+        fill_left(&sprite.trail_left, cursor_position),
+        cursor,
+        fill_right(&sprite.trail_right, lead_width)
+    )
+}
+
+fn fill_left(pattern: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = pattern.chars().collect();
+    if chars.is_empty() {
+        return " ".repeat(width);
+    }
+    let len = chars.len();
+    let start = (len - width % len) % len;
+    (0..width).map(|i| chars[(start + i) % len]).collect()
+}
+
+fn fill_right(pattern: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = pattern.chars().collect();
+    if chars.is_empty() {
+        return " ".repeat(width);
+    }
+    let len = chars.len();
+    (0..width).map(|i| chars[i % len]).collect()
+}
+
 #[derive(Debug, Deserialize)]
 struct SpriteFile {
     name: Option<String>,
@@ -189,5 +255,59 @@ fn fallback_sprite() -> Sprite {
         accent: Color::Cyan,
         order: 0,
         animate_on: AnimateOn::Tick,
+    }
+}
+
+#[cfg(test)]
+mod progress_line_tests {
+    use super::*;
+
+    fn sprite(animate_on: AnimateOn) -> Sprite {
+        Sprite {
+            id: "test".into(),
+            name: "test".into(),
+            frames: vec!["A".into(), "B".into()],
+            trail_left: "=".into(),
+            trail_right: ".".into(),
+            accent: Color::Cyan,
+            order: 0,
+            animate_on,
+        }
+    }
+
+    #[test]
+    fn tick_animation_uses_selected_frame_and_trails() {
+        assert_eq!(
+            progress_line_for_tick(&sprite(AnimateOn::Tick), 0.5, 7, 1),
+            "===B..."
+        );
+    }
+
+    #[test]
+    fn move_animation_uses_cursor_position_for_frame() {
+        let sprite = sprite(AnimateOn::Move);
+
+        assert_eq!(progress_line_for_tick(&sprite, 0.33, 7, 1), "==A....");
+        assert_eq!(progress_line_for_tick(&sprite, 0.5, 7, 0), "===B...");
+    }
+
+    #[test]
+    fn ratio_is_clamped_to_the_bar() {
+        assert_eq!(
+            progress_line_for_tick(&sprite(AnimateOn::Tick), 2.0, 7, 0),
+            "======A"
+        );
+        assert_eq!(
+            progress_line_for_tick(&sprite(AnimateOn::Tick), -1.0, 7, 0),
+            "A......"
+        );
+    }
+
+    #[test]
+    fn very_short_width_falls_back_to_the_first_frame() {
+        assert_eq!(
+            progress_line_for_tick(&sprite(AnimateOn::Tick), 0.5, 2, 1),
+            "A"
+        );
     }
 }

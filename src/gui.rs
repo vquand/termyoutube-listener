@@ -1,6 +1,7 @@
 use crate::app::{ActiveLibrary, App, CaptionStatus, ListFocus, QueueSource};
 use crate::config::CAPTION_LANGS;
 use crate::library::PlaylistEntry;
+use crate::sprites::progress_line;
 use crate::stats::fmt_bytes;
 use crate::ui::fmt_total_duration;
 use crate::ytdlp::{Platform, Track};
@@ -12,6 +13,7 @@ use std::time::Duration;
 slint::include_modules!();
 
 const TICK: Duration = Duration::from_millis(200);
+const GUI_PROGRESS_CELLS: usize = 44;
 
 /// Drive the Slint window against a shared App. Blocks until the window
 /// closes (or `quit` is requested).
@@ -506,6 +508,9 @@ fn push_state(
         0.0
     };
     window.set_playback_ratio(ratio);
+    window.set_progress_line(
+        progress_line(app.current_sprite(), ratio as f64, GUI_PROGRESS_CELLS).into(),
+    );
 
     // Captions
     window.set_show_captions(app.show_captions);
