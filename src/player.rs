@@ -111,6 +111,10 @@ impl Player {
                 "--really-quiet",
                 "--audio-display=no",
                 "--ytdl-format=bestaudio/best",
+                // YouTube 403s a stream URL for ~5 s after issuing it (yt-dlp's
+                // `available_at`). mpv's ytdl hook opens it immediately, so let
+                // ffmpeg back off and retry instead of failing the track.
+                "--stream-lavf-o=reconnect=1,reconnect_on_http_error=403,reconnect_delay_max=10",
                 &format!("--input-ipc-server={}", socket_path.display()),
             ])
             .stdin(Stdio::null())
